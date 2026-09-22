@@ -1,6 +1,6 @@
-# Network Black Box
+# Netrace
 
-Network Black Box is a developer tool that analyzes the observed network performance of public HTTP/HTTPS URLs.
+Netrace is a developer tool that analyzes the observed network performance of public HTTP/HTTPS URLs.
 
 ## Stage 1
 
@@ -39,4 +39,3 @@ frontend/   React + Vite dashboard
 - Arbitrary URL fetching is treated as a security-sensitive operation (SSRF-aware).
 - Standard library APIs are preferred over extra dependencies.
 - No over-engineering: only what Stage 1 needs.
-# Netrace
