@@ -4,6 +4,7 @@ public class AnalysisException extends RuntimeException {
 
     public enum Reason {
         CONNECTION_FAILURE,
+        DNS_FAILURE,
         TIMEOUT,
         INVALID_RESPONSE
     }

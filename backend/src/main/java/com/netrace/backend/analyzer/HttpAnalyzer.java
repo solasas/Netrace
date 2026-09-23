@@ -49,7 +49,10 @@ public class HttpAnalyzer {
         } catch (HttpTimeoutException e) {
             throw new AnalysisException(AnalysisException.Reason.TIMEOUT,
                     "Request to " + url + " timed out", e);
-        } catch (ConnectException | UnknownHostException e) {
+        } catch (UnknownHostException e) {
+            throw new AnalysisException(AnalysisException.Reason.DNS_FAILURE,
+                    "Could not resolve host for " + url, e);
+        } catch (ConnectException e) {
             throw new AnalysisException(AnalysisException.Reason.CONNECTION_FAILURE,
                     "Failed to connect to " + url, e);
         } catch (IOException e) {

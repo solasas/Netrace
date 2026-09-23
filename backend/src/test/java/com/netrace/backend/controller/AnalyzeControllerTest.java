@@ -41,61 +41,108 @@ class AnalyzeControllerTest {
     }
 
     @Test
-    void returnsBadRequestWhenTheUrlIsBlank() throws Exception {
+    void returnsAConsistentErrorBodyWhenTheUrlIsBlank() throws Exception {
         mockMvc.perform(post("/api/analyze")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"url\":\"\"}"))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.error").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.message").isNotEmpty())
+                .andExpect(jsonPath("$.timestamp").isNotEmpty());
     }
 
     @Test
-    void returnsBadRequestWhenTheRequestBodyIsMalformed() throws Exception {
+    void returnsAConsistentErrorBodyWhenTheRequestBodyIsMalformed() throws Exception {
         mockMvc.perform(post("/api/analyze")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("not json"))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.error").value("VALIDATION_FAILED"));
     }
 
     @Test
-    void returnsBadRequestWhenTheServiceRejectsTheUrlAsInvalid() throws Exception {
+    void returnsAConsistentErrorBodyWhenTheServiceRejectsTheUrlAsInvalid() throws Exception {
         when(analysisService.analyze(any())).thenThrow(new InvalidUrlException("ftp://example.com"));
 
         mockMvc.perform(post("/api/analyze")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"url\":\"ftp://example.com\"}"))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.error").value("INVALID_URL"))
+                .andExpect(jsonPath("$.message").value("Not a valid http/https URL: ftp://example.com"));
     }
 
     @Test
-    void returnsBadGatewayOnConnectionFailure() throws Exception {
+    void returnsAConsistentErrorBodyOnConnectionFailure() throws Exception {
         when(analysisService.analyze(any())).thenThrow(new AnalysisException(
-                AnalysisException.Reason.CONNECTION_FAILURE, "boom", new RuntimeException()));
+                AnalysisException.Reason.CONNECTION_FAILURE, "Failed to connect to https://example.com",
+                new RuntimeException("internal socket detail that should not leak")));
 
         mockMvc.perform(post("/api/analyze")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"url\":\"https://example.com\"}"))
-                .andExpect(status().isBadGateway());
+                .andExpect(status().isBadGateway())
+                .andExpect(jsonPath("$.status").value(502))
+                .andExpect(jsonPath("$.error").value("CONNECTION_FAILURE"))
+                .andExpect(jsonPath("$.message").value("Failed to connect to https://example.com"));
     }
 
     @Test
-    void returnsGatewayTimeoutOnTimeout() throws Exception {
+    void returnsAConsistentErrorBodyOnDnsFailure() throws Exception {
         when(analysisService.analyze(any())).thenThrow(new AnalysisException(
-                AnalysisException.Reason.TIMEOUT, "boom", new RuntimeException()));
+                AnalysisException.Reason.DNS_FAILURE, "Could not resolve host for https://example.invalid",
+                new RuntimeException()));
+
+        mockMvc.perform(post("/api/analyze")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"url\":\"https://example.invalid\"}"))
+                .andExpect(status().isBadGateway())
+                .andExpect(jsonPath("$.status").value(502))
+                .andExpect(jsonPath("$.error").value("DNS_FAILURE"));
+    }
+
+    @Test
+    void returnsAConsistentErrorBodyOnTimeout() throws Exception {
+        when(analysisService.analyze(any())).thenThrow(new AnalysisException(
+                AnalysisException.Reason.TIMEOUT, "Request to https://example.com timed out",
+                new RuntimeException()));
 
         mockMvc.perform(post("/api/analyze")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"url\":\"https://example.com\"}"))
-                .andExpect(status().isGatewayTimeout());
+                .andExpect(status().isGatewayTimeout())
+                .andExpect(jsonPath("$.status").value(504))
+                .andExpect(jsonPath("$.error").value("TIMEOUT"));
     }
 
     @Test
-    void returnsBadGatewayOnAnInvalidUpstreamResponse() throws Exception {
+    void returnsAConsistentErrorBodyOnAnInvalidUpstreamResponse() throws Exception {
         when(analysisService.analyze(any())).thenThrow(new AnalysisException(
-                AnalysisException.Reason.INVALID_RESPONSE, "boom", new RuntimeException()));
+                AnalysisException.Reason.INVALID_RESPONSE, "Invalid response from https://example.com",
+                new RuntimeException()));
 
         mockMvc.perform(post("/api/analyze")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"url\":\"https://example.com\"}"))
-                .andExpect(status().isBadGateway());
+                .andExpect(status().isBadGateway())
+                .andExpect(jsonPath("$.status").value(502))
+                .andExpect(jsonPath("$.error").value("INVALID_RESPONSE"));
+    }
+
+    @Test
+    void returnsAGenericErrorBodyForAnUnexpectedFailureWithoutLeakingItsDetails() throws Exception {
+        when(analysisService.analyze(any()))
+                .thenThrow(new RuntimeException("connection pool internals: leaked socket at 10.0.4.2:5432"));
+
+        mockMvc.perform(post("/api/analyze")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"url\":\"https://example.com\"}"))
+                .andExpect(status().isInternalServerError())
+                .andExpect(jsonPath("$.status").value(500))
+                .andExpect(jsonPath("$.error").value("ANALYSIS_FAILED"))
+                .andExpect(jsonPath("$.message").value("An unexpected error occurred while analyzing the URL"));
     }
 }

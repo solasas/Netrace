@@ -11,12 +11,16 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.UnknownHostException;
 import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class HttpAnalyzerTest {
 
@@ -95,6 +99,21 @@ class HttpAnalyzerTest {
                 .isInstanceOf(AnalysisException.class)
                 .extracting(e -> ((AnalysisException) e).reason())
                 .isEqualTo(AnalysisException.Reason.CONNECTION_FAILURE);
+    }
+
+    @Test
+    void throwsADnsFailureWhenTheHostCannotBeResolved() throws IOException, InterruptedException {
+        // Real DNS behavior for unresolvable names isn't reliable across
+        // environments (some networks redirect NXDOMAIN instead of failing
+        // resolution), so this exercises the mapping directly.
+        HttpClient mockClient = mock(HttpClient.class);
+        when(mockClient.send(any(), any())).thenThrow(new UnknownHostException("does-not-resolve.example"));
+        HttpAnalyzer analyzer = new HttpAnalyzer(mockClient, 2000);
+
+        assertThatThrownBy(() -> analyzer.analyze("http://does-not-resolve.example/"))
+                .isInstanceOf(AnalysisException.class)
+                .extracting(e -> ((AnalysisException) e).reason())
+                .isEqualTo(AnalysisException.Reason.DNS_FAILURE);
     }
 
     @Test
