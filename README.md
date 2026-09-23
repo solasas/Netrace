@@ -21,6 +21,14 @@ Results are shown in a React dashboard with a waterfall-style timeline.
 
 Stage 1 does not include persistence, authentication, multi-URL comparison, or historical tracking — those are later stages.
 
+## Architecture
+
+The frontend never talks to the target URL directly. It calls the backend's `POST /api/analyze` endpoint; the backend performs the real HTTP(S) request to the user-supplied URL and returns the observed measurements as JSON, which the frontend renders. Network-level timing (DNS/TCP/TLS) isn't observable from browser JavaScript, so it has to be measured server-side using real Java networking APIs. See [docs/architecture.md](docs/architecture.md) for the full breakdown, including SSRF considerations.
+
+## Planned Measurement Phases
+
+Stage 1's measurements are built up incrementally — total request timing first, then TTFB/download split, then a full DNS/TCP/TLS breakdown, then the waterfall visualization. See [docs/measurement-phases.md](docs/measurement-phases.md) for details.
+
 ## Tech Stack
 
 - **Backend:** Java 21, Spring Boot, Maven, Spring Web
@@ -31,6 +39,7 @@ Stage 1 does not include persistence, authentication, multi-URL comparison, or h
 ```
 backend/    Spring Boot application (network analysis engine + REST API)
 frontend/   React + Vite dashboard
+docs/       Architecture notes and roadmap
 ```
 
 ## Engineering Principles
