@@ -49,6 +49,21 @@ cd backend
 ./mvnw test
 ```
 
+## Configuration
+
+The analyzer's outbound HTTP timeouts are configurable via `backend/src/main/resources/application.properties`, environment variables, or `--` command-line arguments (standard Spring Boot property sources):
+
+| Property | Default | Controls |
+|---|---|---|
+| `netrace.analyzer.connect-timeout` | `5s` | Max time to establish a TCP connection to the target URL. Exceeding it surfaces as a `TIMEOUT` error. |
+| `netrace.analyzer.request-timeout` | `10s` | Max time for the full request/response exchange once connected, including downloading the response body. Exceeding it also surfaces as a `TIMEOUT` error. |
+
+Values accept Spring Boot's duration shorthand (e.g. `5s`, `500ms`, `2m`). Example override:
+
+```bash
+./mvnw spring-boot:run -Dspring-boot.run.arguments=--netrace.analyzer.request-timeout=3s
+```
+
 ## Running the Frontend
 
 ```bash

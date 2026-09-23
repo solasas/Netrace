@@ -1,5 +1,6 @@
 package com.netrace.backend.analyzer;
 
+import com.netrace.backend.config.AnalyzerProperties;
 import com.netrace.backend.dto.AnalyzeResponse;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
@@ -108,7 +109,8 @@ class HttpAnalyzerTest {
         // resolution), so this exercises the mapping directly.
         HttpClient mockClient = mock(HttpClient.class);
         when(mockClient.send(any(), any())).thenThrow(new UnknownHostException("does-not-resolve.example"));
-        HttpAnalyzer analyzer = new HttpAnalyzer(mockClient, 2000);
+        HttpAnalyzer analyzer = new HttpAnalyzer(mockClient,
+                new AnalyzerProperties(Duration.ofSeconds(2), Duration.ofSeconds(2)));
 
         assertThatThrownBy(() -> analyzer.analyze("http://does-not-resolve.example/"))
                 .isInstanceOf(AnalysisException.class)
@@ -174,6 +176,6 @@ class HttpAnalyzerTest {
                 .connectTimeout(Duration.ofSeconds(2))
                 .followRedirects(HttpClient.Redirect.NORMAL)
                 .build();
-        return new HttpAnalyzer(client, requestTimeout.toMillis());
+        return new HttpAnalyzer(client, new AnalyzerProperties(Duration.ofSeconds(2), requestTimeout));
     }
 }

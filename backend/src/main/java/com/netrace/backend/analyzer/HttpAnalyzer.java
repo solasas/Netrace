@@ -1,7 +1,7 @@
 package com.netrace.backend.analyzer;
 
+import com.netrace.backend.config.AnalyzerProperties;
 import com.netrace.backend.dto.AnalyzeResponse;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -26,11 +26,9 @@ public class HttpAnalyzer {
     private final HttpClient httpClient;
     private final Duration requestTimeout;
 
-    public HttpAnalyzer(
-            HttpClient httpClient,
-            @Value("${netrace.analyzer.request-timeout-ms:10000}") long requestTimeoutMs) {
+    public HttpAnalyzer(HttpClient httpClient, AnalyzerProperties analyzerProperties) {
         this.httpClient = httpClient;
-        this.requestTimeout = Duration.ofMillis(requestTimeoutMs);
+        this.requestTimeout = analyzerProperties.requestTimeout();
     }
 
     public AnalyzeResponse analyze(String url) {

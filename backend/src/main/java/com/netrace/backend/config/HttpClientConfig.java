@@ -1,20 +1,19 @@
 package com.netrace.backend.config;
 
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 import java.net.http.HttpClient;
-import java.time.Duration;
 
 @Configuration
+@EnableConfigurationProperties(AnalyzerProperties.class)
 public class HttpClientConfig {
 
     @Bean
-    public HttpClient httpClient(
-            @Value("${netrace.analyzer.connect-timeout-ms:5000}") long connectTimeoutMs) {
+    public HttpClient httpClient(AnalyzerProperties analyzerProperties) {
         return HttpClient.newBuilder()
-                .connectTimeout(Duration.ofMillis(connectTimeoutMs))
+                .connectTimeout(analyzerProperties.connectTimeout())
                 .followRedirects(HttpClient.Redirect.NORMAL)
                 .build();
     }
