@@ -1,7 +1,7 @@
 package com.netrace.backend.analyzer;
 
 import com.netrace.backend.config.AnalyzerProperties;
-import com.netrace.backend.dto.AnalyzeResponse;
+import com.netrace.backend.dto.HttpResult;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -44,7 +44,7 @@ class HttpAnalyzerTest {
         server.start();
         String url = "http://localhost:" + server.getAddress().getPort() + "/ok";
 
-        AnalyzeResponse response = newAnalyzer().analyze(url);
+        HttpResult response = newAnalyzer().analyze(url);
 
         assertThat(response.statusCode()).isEqualTo(200);
         assertThat(response.url()).isEqualTo(url);
@@ -68,7 +68,7 @@ class HttpAnalyzerTest {
         });
         server.start();
 
-        AnalyzeResponse response = newAnalyzer().analyze("http://localhost:" + port + "/redirect");
+        HttpResult response = newAnalyzer().analyze("http://localhost:" + port + "/redirect");
 
         assertThat(response.statusCode()).isEqualTo(200);
         assertThat(response.url()).isEqualTo(targetUrl);
@@ -84,7 +84,7 @@ class HttpAnalyzerTest {
         server.start();
         String url = "http://localhost:" + server.getAddress().getPort() + "/missing";
 
-        AnalyzeResponse response = newAnalyzer().analyze(url);
+        HttpResult response = newAnalyzer().analyze(url);
 
         assertThat(response.statusCode()).isEqualTo(404);
     }

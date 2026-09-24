@@ -1,7 +1,7 @@
 package com.netrace.backend.analyzer;
 
 import com.netrace.backend.config.AnalyzerProperties;
-import com.netrace.backend.dto.AnalyzeResponse;
+import com.netrace.backend.dto.HttpResult;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -18,7 +18,11 @@ import java.time.Duration;
 /**
  * Makes a real HTTP(S) request to an already-validated URL and reports
  * the observed status code, final URL (after redirects), and total
- * elapsed time. DNS/TCP/TLS phase timing is not broken out yet.
+ * elapsed time. This still performs its own internal DNS resolution as
+ * part of connecting (via HttpClient) - it does not reuse DnsAnalyzer's
+ * result - so totalTimeMs includes that internal resolution too, on top
+ * of whatever DnsAnalyzer separately measured beforehand. TCP/TLS phase
+ * timing is not broken out yet.
  */
 @Component
 public class HttpAnalyzer {
@@ -31,7 +35,7 @@ public class HttpAnalyzer {
         this.requestTimeout = analyzerProperties.requestTimeout();
     }
 
-    public AnalyzeResponse analyze(String url) {
+    public HttpResult analyze(String url) {
         HttpRequest request = HttpRequest.newBuilder(URI.create(url))
                 .timeout(requestTimeout)
                 .GET()
@@ -63,6 +67,6 @@ public class HttpAnalyzer {
         }
         long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000;
 
-        return new AnalyzeResponse(response.uri().toString(), response.statusCode(), elapsedMs);
+        return new HttpResult(response.uri().toString(), response.statusCode(), elapsedMs);
     }
 }

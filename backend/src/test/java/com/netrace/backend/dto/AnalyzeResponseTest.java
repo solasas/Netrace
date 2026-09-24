@@ -3,6 +3,8 @@ package com.netrace.backend.dto;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.ObjectMapper;
 
+import java.util.List;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 class AnalyzeResponseTest {
@@ -11,7 +13,8 @@ class AnalyzeResponseTest {
 
     @Test
     void serializesToTheExpectedJsonFields() throws Exception {
-        AnalyzeResponse response = new AnalyzeResponse("https://example.com", 200, 123L);
+        DnsResult dns = new DnsResult("example.com", List.of("93.184.216.34"), 12L);
+        AnalyzeResponse response = new AnalyzeResponse("https://example.com", dns, 200, 123L);
 
         String json = objectMapper.writeValueAsString(response);
 
@@ -19,6 +22,11 @@ class AnalyzeResponseTest {
                 .isEqualTo(objectMapper.readTree("""
                         {
                           "url": "https://example.com",
+                          "dns": {
+                            "hostname": "example.com",
+                            "resolvedIps": ["93.184.216.34"],
+                            "durationMs": 12
+                          },
                           "statusCode": 200,
                           "totalTimeMs": 123
                         }
@@ -30,6 +38,11 @@ class AnalyzeResponseTest {
         String json = """
                 {
                   "url": "https://example.com",
+                  "dns": {
+                    "hostname": "example.com",
+                    "resolvedIps": ["93.184.216.34"],
+                    "durationMs": 12
+                  },
                   "statusCode": 404,
                   "totalTimeMs": 987
                 }
@@ -37,6 +50,7 @@ class AnalyzeResponseTest {
 
         AnalyzeResponse response = objectMapper.readValue(json, AnalyzeResponse.class);
 
-        assertThat(response).isEqualTo(new AnalyzeResponse("https://example.com", 404, 987L));
+        DnsResult dns = new DnsResult("example.com", List.of("93.184.216.34"), 12L);
+        assertThat(response).isEqualTo(new AnalyzeResponse("https://example.com", dns, 404, 987L));
     }
 }

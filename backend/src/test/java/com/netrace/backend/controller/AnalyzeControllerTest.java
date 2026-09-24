@@ -2,6 +2,7 @@ package com.netrace.backend.controller;
 
 import com.netrace.backend.analyzer.AnalysisException;
 import com.netrace.backend.dto.AnalyzeResponse;
+import com.netrace.backend.dto.DnsResult;
 import com.netrace.backend.service.AnalysisService;
 import com.netrace.backend.service.InvalidUrlException;
 import org.junit.jupiter.api.Test;
@@ -10,6 +11,8 @@ import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+
+import java.util.List;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
@@ -28,14 +31,18 @@ class AnalyzeControllerTest {
 
     @Test
     void returnsOkWithTheAnalysisResultOnSuccess() throws Exception {
+        DnsResult dns = new DnsResult("example.com", List.of("93.184.216.34"), 12L);
         when(analysisService.analyze(any())).thenReturn(
-                new AnalyzeResponse("https://example.com", 200, 123L));
+                new AnalyzeResponse("https://example.com", dns, 200, 123L));
 
         mockMvc.perform(post("/api/analyze")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"url\":\"https://example.com\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.url").value("https://example.com"))
+                .andExpect(jsonPath("$.dns.hostname").value("example.com"))
+                .andExpect(jsonPath("$.dns.resolvedIps[0]").value("93.184.216.34"))
+                .andExpect(jsonPath("$.dns.durationMs").value(12))
                 .andExpect(jsonPath("$.statusCode").value(200))
                 .andExpect(jsonPath("$.totalTimeMs").value(123));
     }
