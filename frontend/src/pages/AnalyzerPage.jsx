@@ -7,6 +7,7 @@ import HttpDetails from '../components/HttpDetails'
 import TcpDetails from '../components/TcpDetails'
 import TextInput from '../components/TextInput'
 import TlsDetails from '../components/TlsDetails'
+import Waterfall from '../components/Waterfall'
 import { analyzeUrl } from '../services/analyzeService'
 
 const STATUS = {
@@ -73,6 +74,13 @@ function AnalyzerPage() {
       {status === STATUS.SUCCESS && result && (
         <>
           <AnalysisSummary url={submittedUrl} result={result} />
+          <Waterfall
+            dnsMs={result.probes?.dns?.durationMs}
+            tcpMs={result.probes?.tcp?.durationMs}
+            tlsMs={result.probes?.tls?.durationMs ?? null}
+            ttfbMs={result.ttfbMs}
+            downloadMs={result.downloadMs}
+          />
           <DnsDetails dns={result.probes?.dns} />
           {result.probes?.tcp && (
             <TcpDetails
