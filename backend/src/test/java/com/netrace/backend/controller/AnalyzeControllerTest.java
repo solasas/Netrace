@@ -37,7 +37,7 @@ class AnalyzeControllerTest {
         TcpResult tcp = new TcpResult("93.184.216.34", 443, 8L);
         TlsResult tls = new TlsResult("TLSv1.3", "TLS_AES_128_GCM_SHA256", "CN=example.com", "CN=Test CA", 20L);
         when(analysisService.analyze(any())).thenReturn(
-                new AnalyzeResponse("https://example.com", dns, tcp, tls, 200, "HTTP/2", 123L));
+                new AnalyzeResponse("https://example.com", dns, tcp, tls, 200, "HTTP/2", 1234L, "text/html", 123L));
 
         mockMvc.perform(post("/api/analyze")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -57,6 +57,8 @@ class AnalyzeControllerTest {
                 .andExpect(jsonPath("$.tls.durationMs").value(20))
                 .andExpect(jsonPath("$.statusCode").value(200))
                 .andExpect(jsonPath("$.protocol").value("HTTP/2"))
+                .andExpect(jsonPath("$.contentLength").value(1234))
+                .andExpect(jsonPath("$.contentType").value("text/html"))
                 .andExpect(jsonPath("$.totalTimeMs").value(123));
     }
 
@@ -65,14 +67,16 @@ class AnalyzeControllerTest {
         DnsResult dns = new DnsResult("example.com", List.of("93.184.216.34"), 12L);
         TcpResult tcp = new TcpResult("93.184.216.34", 80, 8L);
         when(analysisService.analyze(any())).thenReturn(
-                new AnalyzeResponse("http://example.com", dns, tcp, null, 200, "HTTP/1.1", 123L));
+                new AnalyzeResponse("http://example.com", dns, tcp, null, 200, "HTTP/1.1", null, "text/plain", 123L));
 
         mockMvc.perform(post("/api/analyze")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"url\":\"http://example.com\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.tls").value(org.hamcrest.Matchers.nullValue()))
-                .andExpect(jsonPath("$.protocol").value("HTTP/1.1"));
+                .andExpect(jsonPath("$.protocol").value("HTTP/1.1"))
+                .andExpect(jsonPath("$.contentLength").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.contentType").value("text/plain"));
     }
 
     @Test

@@ -70,6 +70,69 @@ class HttpAnalyzerTest {
     }
 
     @Test
+    void capturesContentTypeContentLengthAndTheFinalUrlAfterARedirect() throws IOException {
+        server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
+        int port = server.getAddress().getPort();
+        String targetUrl = "http://localhost:" + port + "/target";
+        byte[] body = "{\"hello\":\"world\"}".getBytes(StandardCharsets.UTF_8);
+
+        server.createContext("/target", exchange -> {
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, body.length);
+            try (OutputStream out = exchange.getResponseBody()) {
+                out.write(body);
+            }
+        });
+        server.createContext("/redirect", exchange -> {
+            exchange.getResponseHeaders().add("Location", targetUrl);
+            exchange.sendResponseHeaders(302, -1);
+            exchange.close();
+        });
+        server.start();
+
+        HttpResult response = newAnalyzer().analyze("http://localhost:" + port + "/redirect");
+
+        assertThat(response.url()).isEqualTo(targetUrl);
+        assertThat(response.contentType()).isEqualTo("application/json");
+        assertThat(response.contentLength()).isEqualTo((long) body.length);
+    }
+
+    @Test
+    void reportsNullContentLengthWhenTheServerOmitsItRatherThanZero() throws IOException {
+        // Chunked transfer-encoding routinely omits Content-Length; this
+        // must be represented as "unknown" (null), not "zero bytes".
+        server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
+        byte[] body = "a chunked body with no declared content-length".getBytes(StandardCharsets.US_ASCII);
+        server.createContext("/chunked", exchange -> {
+            exchange.sendResponseHeaders(200, 0);
+            try (OutputStream out = exchange.getResponseBody()) {
+                out.write(body);
+            }
+        });
+        server.start();
+        String url = "http://localhost:" + server.getAddress().getPort() + "/chunked";
+
+        HttpResult response = newAnalyzer().analyze(url);
+
+        assertThat(response.contentLength()).isNull();
+    }
+
+    @Test
+    void reportsNullContentTypeWhenTheServerOmitsIt() throws IOException {
+        server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
+        server.createContext("/no-content-type", exchange -> {
+            exchange.sendResponseHeaders(204, -1);
+            exchange.close();
+        });
+        server.start();
+        String url = "http://localhost:" + server.getAddress().getPort() + "/no-content-type";
+
+        HttpResult response = newAnalyzer().analyze(url);
+
+        assertThat(response.contentType()).isNull();
+    }
+
+    @Test
     void javaHttpClientHasNoHttp3SupportToDetect() {
         // Locks in the actual current JDK reality as a verifiable test,
         // not just a claim in prose: if a future JDK ever adds HTTP/3 to

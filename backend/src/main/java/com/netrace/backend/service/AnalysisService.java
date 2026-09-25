@@ -113,7 +113,8 @@ public class AnalysisService {
 
         HttpResult http = httpAnalyzer.analyze(url);
 
-        return new AnalyzeResponse(http.url(), dns, tcp, tls, http.statusCode(), http.protocol(), http.totalTimeMs());
+        return new AnalyzeResponse(http.url(), dns, tcp, tls, http.statusCode(), http.protocol(),
+                http.contentLength(), http.contentType(), http.totalTimeMs());
     }
 
     private static AnalysisException tcpFailure(String host, int port, TcpFailureReason reason) {

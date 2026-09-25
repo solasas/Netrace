@@ -8,6 +8,8 @@ public record AnalyzeResponse(
         TlsResult tls,
         int statusCode,
         String protocol,
+        Long contentLength,
+        String contentType,
         long totalTimeMs
 
 ) {

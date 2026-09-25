@@ -16,6 +16,7 @@ import java.net.http.HttpTimeoutException;
 import java.nio.ByteBuffer;
 import java.time.Duration;
 import java.util.List;
+import java.util.OptionalLong;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.Flow;
@@ -67,6 +68,11 @@ import java.util.concurrent.atomic.AtomicLong;
  * switch with no default case specifically so that if a future JDK
  * ever adds a third value, this stops compiling instead of silently
  * mis-reporting it.
+ * <p>
+ * contentLength and contentType are read straight from the response
+ * headers - not derived from the body, which is never stored. Both
+ * are null when the server omitted that header (routine for chunked
+ * responses in particular).
  */
 @Component
 public class HttpAnalyzer {
@@ -123,9 +129,12 @@ public class HttpAnalyzer {
         long downloadMs = elapsedMs - ttfbMs;
         boolean bodyTruncated = Boolean.TRUE.equals(response.body());
         String protocol = protocolName(response.version());
+        OptionalLong contentLengthHeader = response.headers().firstValueAsLong("content-length");
+        Long contentLength = contentLengthHeader.isPresent() ? contentLengthHeader.getAsLong() : null;
+        String contentType = response.headers().firstValue("content-type").orElse(null);
 
         return new HttpResult(response.uri().toString(), response.statusCode(), elapsedMs, ttfbMs, downloadMs,
-                bodyTruncated, protocol);
+                bodyTruncated, protocol, contentLength, contentType);
     }
 
     private static String protocolName(HttpClient.Version version) {

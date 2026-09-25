@@ -68,14 +68,22 @@ class AnalyzeEndpointIntegrationTest {
         assertThat(response.getBody().tls().certificateIssuer()).isNotBlank();
         assertThat(response.getBody().tls().durationMs()).isGreaterThanOrEqualTo(0);
         assertThat(response.getBody().protocol()).isIn("HTTP/1.1", "HTTP/2");
+        // Not asserting an exact contentLength here: whether Cloudflare
+        // sends a Content-Length or uses chunked transfer for this page
+        // isn't something this test should depend on.
+        assertThat(response.getBody().contentType()).isNotBlank();
     }
 
     @Test
     void analyzesALocalHttpUrlSuccessfully() throws IOException {
+        byte[] body = "hello from a local http server".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
         localServer = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
         localServer.createContext("/ok", exchange -> {
-            exchange.sendResponseHeaders(200, -1);
-            exchange.close();
+            exchange.getResponseHeaders().add("Content-Type", "text/plain");
+            exchange.sendResponseHeaders(200, body.length);
+            try (java.io.OutputStream out = exchange.getResponseBody()) {
+                out.write(body);
+            }
         });
         localServer.start();
         String url = "http://localhost:" + localServer.getAddress().getPort() + "/ok";
@@ -95,6 +103,8 @@ class AnalyzeEndpointIntegrationTest {
         assertThat(response.getBody().tcp().durationMs()).isGreaterThanOrEqualTo(0);
         assertThat(response.getBody().tls()).isNull();
         assertThat(response.getBody().protocol()).isEqualTo("HTTP/1.1");
+        assertThat(response.getBody().contentType()).isEqualTo("text/plain");
+        assertThat(response.getBody().contentLength()).isEqualTo((long) body.length);
     }
 
     @Test

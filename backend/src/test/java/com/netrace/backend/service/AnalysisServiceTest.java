@@ -78,7 +78,7 @@ class AnalysisServiceTest {
         when(tcpAnalyzer.analyze("93.184.216.34", 443)).thenReturn(tcpSuccess("93.184.216.34", 443));
         when(tlsAnalyzer.analyze("example.com", "93.184.216.34", 443))
                 .thenReturn(tlsSuccess("example.com", "93.184.216.34", 443));
-        when(httpAnalyzer.analyze(url)).thenReturn(new HttpResult(url, 200, 42L, 30L, 12L, false, "HTTP/2"));
+        when(httpAnalyzer.analyze(url)).thenReturn(new HttpResult(url, 200, 42L, 30L, 12L, false, "HTTP/2", 1234L, "text/html"));
 
         AnalyzeResponse actual = service().analyze(new AnalyzeRequest(url));
 
@@ -87,7 +87,7 @@ class AnalysisServiceTest {
         TlsResult expectedTls =
                 new TlsResult("TLSv1.3", "TLS_AES_128_GCM_SHA256", "CN=example.com", "CN=Test CA", 20L);
         assertThat(actual)
-                .isEqualTo(new AnalyzeResponse(url, expectedDns, expectedTcp, expectedTls, 200, "HTTP/2", 42L));
+                .isEqualTo(new AnalyzeResponse(url, expectedDns, expectedTcp, expectedTls, 200, "HTTP/2", 1234L, "text/html", 42L));
     }
 
     @Test
@@ -96,7 +96,7 @@ class AnalysisServiceTest {
         when(urlValidator.isValid(url)).thenReturn(true);
         when(dnsAnalyzer.analyze(url)).thenReturn(dnsSuccess("example.com", "93.184.216.34"));
         when(tcpAnalyzer.analyze("93.184.216.34", 80)).thenReturn(tcpSuccess("93.184.216.34", 80));
-        when(httpAnalyzer.analyze(url)).thenReturn(new HttpResult(url, 200, 42L, 30L, 12L, false, "HTTP/2"));
+        when(httpAnalyzer.analyze(url)).thenReturn(new HttpResult(url, 200, 42L, 30L, 12L, false, "HTTP/2", 1234L, "text/html"));
 
         AnalyzeResponse actual = service().analyze(new AnalyzeRequest(url));
 
@@ -112,7 +112,7 @@ class AnalysisServiceTest {
         when(tcpAnalyzer.analyze("93.184.216.34", 8443)).thenReturn(tcpSuccess("93.184.216.34", 8443));
         when(tlsAnalyzer.analyze("example.com", "93.184.216.34", 8443))
                 .thenReturn(tlsSuccess("example.com", "93.184.216.34", 8443));
-        when(httpAnalyzer.analyze(url)).thenReturn(new HttpResult(url, 200, 42L, 30L, 12L, false, "HTTP/2"));
+        when(httpAnalyzer.analyze(url)).thenReturn(new HttpResult(url, 200, 42L, 30L, 12L, false, "HTTP/2", 1234L, "text/html"));
 
         service().analyze(new AnalyzeRequest(url));
 
@@ -126,7 +126,7 @@ class AnalysisServiceTest {
         when(urlValidator.isValid(url)).thenReturn(true);
         when(dnsAnalyzer.analyze(url)).thenReturn(dnsSuccess("example.com", "93.184.216.34"));
         when(tcpAnalyzer.analyze("93.184.216.34", 80)).thenReturn(tcpSuccess("93.184.216.34", 80));
-        when(httpAnalyzer.analyze(url)).thenReturn(new HttpResult(url, 200, 42L, 30L, 12L, false, "HTTP/2"));
+        when(httpAnalyzer.analyze(url)).thenReturn(new HttpResult(url, 200, 42L, 30L, 12L, false, "HTTP/2", 1234L, "text/html"));
 
         service().analyze(new AnalyzeRequest(url));
 
