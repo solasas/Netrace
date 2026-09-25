@@ -13,17 +13,23 @@ import java.net.http.HttpConnectTimeoutException;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
+import java.nio.ByteBuffer;
 import java.time.Duration;
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
+import java.util.concurrent.Flow;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Makes a real HTTP(S) request to an already-validated URL and reports
  * the observed status code, final URL (after redirects), total elapsed
- * time, and time to first byte (TTFB). This still performs its own
- * internal DNS resolution as part of connecting (via HttpClient) - it
- * does not reuse DnsAnalyzer's result - so totalTimeMs includes that
- * internal resolution too, on top of whatever DnsAnalyzer separately
- * measured beforehand. TCP/TLS phase timing is not broken out here
- * either.
+ * time, time to first byte (TTFB), and download time. This still
+ * performs its own internal DNS resolution as part of connecting (via
+ * HttpClient) - it does not reuse DnsAnalyzer's result - so
+ * totalTimeMs includes that internal resolution too, on top of
+ * whatever DnsAnalyzer separately measured beforehand. TCP/TLS phase
+ * timing is not broken out here either.
  * <p>
  * ttfbMs is measured from the same starting point as totalTimeMs
  * (right before the request is sent) to the moment
@@ -36,17 +42,37 @@ import java.time.Duration;
  * analyzer's own connection setup and request-send time together with
  * however long the server took to start responding. For a redirected
  * request it reflects the final response's headers, not an
- * intermediate hop's.
+ * intermediate hop's. downloadMs is simply totalTimeMs - ttfbMs: a
+ * real derived duration from those same two real timestamps, not a
+ * separately-estimated figure.
+ * <p>
+ * The response body is never fully buffered in memory (bytes are
+ * discarded as they arrive, exactly as before), but bytes are still
+ * counted as they are received. If the body exceeds
+ * netrace.analyzer.max-response-size, the subscription is cancelled
+ * and the download is abandoned - a server cannot force this analyzer
+ * to spend unbounded bandwidth/time on an arbitrarily large or
+ * never-ending response. HttpResult.bodyTruncated reports when this
+ * happened; downloadMs in that case is time spent up to the cutoff,
+ * not what a full download would have taken.
  */
 @Component
 public class HttpAnalyzer {
 
     private final HttpClient httpClient;
     private final Duration requestTimeout;
+    private final long maxResponseBytes;
 
     public HttpAnalyzer(HttpClient httpClient, AnalyzerProperties analyzerProperties) {
+        long maxResponseBytes = analyzerProperties.maxResponseSize().toBytes();
+        if (maxResponseBytes <= 0) {
+            throw new IllegalStateException(
+                    "netrace.analyzer.max-response-size must be positive, was "
+                            + analyzerProperties.maxResponseSize());
+        }
         this.httpClient = httpClient;
         this.requestTimeout = analyzerProperties.requestTimeout();
+        this.maxResponseBytes = maxResponseBytes;
     }
 
     public HttpResult analyze(String url) {
@@ -55,9 +81,9 @@ public class HttpAnalyzer {
                 .GET()
                 .build();
 
-        TtfbCapturingBodyHandler bodyHandler = new TtfbCapturingBodyHandler();
+        TtfbCapturingBodyHandler bodyHandler = new TtfbCapturingBodyHandler(maxResponseBytes);
         long startNanos = System.nanoTime();
-        HttpResponse<Void> response;
+        HttpResponse<Boolean> response;
         try {
             response = httpClient.send(request, bodyHandler);
         } catch (HttpConnectTimeoutException e) {
@@ -82,28 +108,87 @@ public class HttpAnalyzer {
         }
         long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000;
         long ttfbMs = (bodyHandler.firstByteNanos() - startNanos) / 1_000_000;
+        long downloadMs = elapsedMs - ttfbMs;
+        boolean bodyTruncated = Boolean.TRUE.equals(response.body());
 
-        return new HttpResult(response.uri().toString(), response.statusCode(), elapsedMs, ttfbMs);
+        return new HttpResult(
+                response.uri().toString(), response.statusCode(), elapsedMs, ttfbMs, downloadMs, bodyTruncated);
     }
 
     /**
      * Times the moment the response status line and headers become
-     * available, then discards the body exactly like the previous
-     * BodyHandlers.discarding() did - this class only adds a timestamp
-     * around that existing behavior.
+     * available, then hands off to a size-limited discarding
+     * subscriber for the body.
      */
-    private static final class TtfbCapturingBodyHandler implements HttpResponse.BodyHandler<Void> {
+    private static final class TtfbCapturingBodyHandler implements HttpResponse.BodyHandler<Boolean> {
 
+        private final long maxBytes;
         private long firstByteNanos;
 
+        TtfbCapturingBodyHandler(long maxBytes) {
+            this.maxBytes = maxBytes;
+        }
+
         @Override
-        public HttpResponse.BodySubscriber<Void> apply(HttpResponse.ResponseInfo responseInfo) {
+        public HttpResponse.BodySubscriber<Boolean> apply(HttpResponse.ResponseInfo responseInfo) {
             firstByteNanos = System.nanoTime();
-            return HttpResponse.BodySubscribers.discarding();
+            return new SizeLimitedDiscardingBodySubscriber(maxBytes);
         }
 
         long firstByteNanos() {
             return firstByteNanos;
+        }
+    }
+
+    /**
+     * Reads and discards body bytes without ever buffering them, the
+     * same as HttpResponse.BodySubscribers.discarding(), but cancels
+     * the subscription once more than maxBytes have been received
+     * rather than reading an unbounded or arbitrarily large body to
+     * completion. getBody() resolves to true if the body was
+     * truncated this way, false if it was fully consumed within the
+     * limit.
+     */
+    private static final class SizeLimitedDiscardingBodySubscriber
+            implements HttpResponse.BodySubscriber<Boolean> {
+
+        private final long maxBytes;
+        private final AtomicLong received = new AtomicLong();
+        private final CompletableFuture<Boolean> result = new CompletableFuture<>();
+        private volatile Flow.Subscription subscription;
+
+        SizeLimitedDiscardingBodySubscriber(long maxBytes) {
+            this.maxBytes = maxBytes;
+        }
+
+        @Override
+        public void onSubscribe(Flow.Subscription subscription) {
+            this.subscription = subscription;
+            subscription.request(Long.MAX_VALUE);
+        }
+
+        @Override
+        public void onNext(List<ByteBuffer> buffers) {
+            long total = received.addAndGet(buffers.stream().mapToLong(ByteBuffer::remaining).sum());
+            if (total > maxBytes) {
+                subscription.cancel();
+                result.complete(true);
+            }
+        }
+
+        @Override
+        public void onError(Throwable throwable) {
+            result.completeExceptionally(throwable);
+        }
+
+        @Override
+        public void onComplete() {
+            result.complete(false);
+        }
+
+        @Override
+        public CompletionStage<Boolean> getBody() {
+            return result;
         }
     }
 }

@@ -5,6 +5,7 @@ import com.netrace.backend.dto.HttpResult;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.util.unit.DataSize;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -16,6 +17,7 @@ import java.net.UnknownHostException;
 import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.Arrays;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -81,6 +83,66 @@ class HttpAnalyzerTest {
         assertThat(response.totalTimeMs() - response.ttfbMs())
                 .as("the gap between ttfb and total should reflect the body delay, not be ~0")
                 .isGreaterThanOrEqualTo(200);
+    }
+
+    @Test
+    void doesNotTruncateAResponseWithinTheSizeLimit() throws IOException {
+        server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
+        byte[] body = "a perfectly ordinary, small response body".getBytes(StandardCharsets.US_ASCII);
+        server.createContext("/small", exchange -> {
+            exchange.sendResponseHeaders(200, body.length);
+            try (OutputStream out = exchange.getResponseBody()) {
+                out.write(body);
+            }
+        });
+        server.start();
+        String url = "http://localhost:" + server.getAddress().getPort() + "/small";
+
+        HttpResult response = newAnalyzer().analyze(url);
+
+        assertThat(response.bodyTruncated()).isFalse();
+    }
+
+    @Test
+    void abandonsTheDownloadAndReportsTruncationWhenTheBodyExceedsTheMaxResponseSize() throws IOException {
+        // Do not download unbounded response bodies: the server keeps
+        // writing well past the configured 1KB limit (up to ~4MB, via
+        // chunked encoding so no Content-Length caps it upfront); the
+        // analyzer must cancel and return quickly rather than reading it
+        // all just to discard it.
+        server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
+        server.createContext("/huge", exchange -> {
+            exchange.sendResponseHeaders(200, 0);
+            try (OutputStream out = exchange.getResponseBody()) {
+                byte[] chunk = new byte[8192];
+                Arrays.fill(chunk, (byte) 'x');
+                for (int i = 0; i < 500; i++) {
+                    out.write(chunk);
+                    out.flush();
+                }
+            } catch (IOException ignored) {
+                // Expected once the client cancels after exceeding the limit.
+            }
+        });
+        server.start();
+        String url = "http://localhost:" + server.getAddress().getPort() + "/huge";
+
+        HttpResult response = newAnalyzerWithMaxResponseSize(DataSize.ofKilobytes(1)).analyze(url);
+
+        assertThat(response.statusCode()).isEqualTo(200);
+        assertThat(response.bodyTruncated()).isTrue();
+        assertThat(response.totalTimeMs())
+                .as("should abandon the download quickly rather than waiting for the full ~4MB body")
+                .isLessThan(5000);
+    }
+
+    @Test
+    void constructorRejectsAZeroMaxResponseSize() {
+        HttpClient client = HttpClient.newBuilder().build();
+
+        assertThatThrownBy(() -> new HttpAnalyzer(client,
+                new AnalyzerProperties(Duration.ofSeconds(2), Duration.ofSeconds(2), DataSize.ofBytes(0))))
+                .isInstanceOf(IllegalStateException.class);
     }
 
     @Test
@@ -209,5 +271,14 @@ class HttpAnalyzerTest {
                 .followRedirects(HttpClient.Redirect.NORMAL)
                 .build();
         return new HttpAnalyzer(client, new AnalyzerProperties(Duration.ofSeconds(2), requestTimeout));
+    }
+
+    private HttpAnalyzer newAnalyzerWithMaxResponseSize(DataSize maxResponseSize) {
+        HttpClient client = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(2))
+                .followRedirects(HttpClient.Redirect.NORMAL)
+                .build();
+        return new HttpAnalyzer(client,
+                new AnalyzerProperties(Duration.ofSeconds(2), Duration.ofSeconds(2), maxResponseSize));
     }
 }
