@@ -11,6 +11,7 @@ import TlsDetails from '../components/TlsDetails'
 import Waterfall from '../components/Waterfall'
 import { AnalysisError, analyzeUrl } from '../services/analyzeService'
 import { friendlyHeadline } from '../utils/errorMessages'
+import { urlValidationMessage } from '../utils/urlValidation'
 
 const STATUS = {
   IDLE: 'idle',
@@ -20,25 +21,6 @@ const STATUS = {
 }
 
 const EXAMPLE_URL = 'https://example.com'
-
-function isValidHttpUrl(value) {
-  try {
-    const parsed = new URL(value)
-    return parsed.protocol === 'http:' || parsed.protocol === 'https:'
-  } catch {
-    return false
-  }
-}
-
-function validationMessage(trimmedUrl) {
-  if (trimmedUrl.length === 0) {
-    return 'Enter a URL to analyze.'
-  }
-  if (!isValidHttpUrl(trimmedUrl)) {
-    return 'Enter a valid http or https URL.'
-  }
-  return null
-}
 
 function AnalyzerPage() {
   const [url, setUrl] = useState('')
@@ -50,7 +32,7 @@ function AnalyzerPage() {
 
   const isLoading = status === STATUS.LOADING
   const trimmedUrl = url.trim()
-  const currentValidationMessage = touched ? validationMessage(trimmedUrl) : null
+  const currentValidationMessage = touched ? urlValidationMessage(trimmedUrl) : null
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -59,7 +41,7 @@ function AnalyzerPage() {
     }
     setTouched(true)
 
-    const message = validationMessage(trimmedUrl)
+    const message = urlValidationMessage(trimmedUrl)
     if (message) {
       return
     }
