@@ -4,6 +4,7 @@ import com.netrace.backend.analyzer.AnalysisException;
 import com.netrace.backend.analyzer.DnsAnalyzer;
 import com.netrace.backend.analyzer.HttpAnalyzer;
 import com.netrace.backend.analyzer.TcpAnalyzer;
+import com.netrace.backend.analyzer.TlsAnalyzer;
 import com.netrace.backend.dto.AnalyzeRequest;
 import com.netrace.backend.dto.AnalyzeResponse;
 import com.netrace.backend.dto.DnsMetadata;
@@ -13,32 +14,39 @@ import com.netrace.backend.dto.PhaseResult;
 import com.netrace.backend.dto.TcpFailureReason;
 import com.netrace.backend.dto.TcpMetadata;
 import com.netrace.backend.dto.TcpResult;
+import com.netrace.backend.dto.TlsFailureReason;
+import com.netrace.backend.dto.TlsMetadata;
+import com.netrace.backend.dto.TlsResult;
 import com.netrace.backend.validation.UrlValidator;
 import org.springframework.stereotype.Service;
 
 import java.net.URI;
 
 /**
- * Coordinates a single analysis end to end: validate the requested
- * URL, resolve it (DnsAnalyzer), open a fresh TCP connection to the
- * resolved destination (TcpAnalyzer), then run the real HTTP request
- * (HttpAnalyzer), combining all three into the response DTO. Keeps
- * this orchestration out of the controller.
+ * Coordinates a single analysis end to end. For an HTTPS URL:
+ * validate, resolve (DnsAnalyzer), open a fresh TCP connection to the
+ * resolved destination (TcpAnalyzer), perform a fresh TLS handshake
+ * over that same destination (TlsAnalyzer), then run the real HTTP
+ * request (HttpAnalyzer). For an HTTP URL, the TLS phase is skipped
+ * entirely - it is not applicable, so AnalyzeResponse.tls is null
+ * rather than some placeholder/empty result. Keeps this orchestration
+ * out of the controller.
  * <p>
- * A DNS or TCP failure short-circuits before the next phase runs - if
- * we already know the resolved address refuses connections, there is
- * no point letting HttpAnalyzer attempt (and redundantly fail at) its
- * own connection to the same target. TCP failures are translated into
- * a specific AnalysisException.Reason and message based on
- * TcpFailureReason (refused/timeout/unreachable/unknown), rather than
+ * A DNS, TCP, or TLS failure short-circuits before the next phase
+ * runs - if the resolved address refuses connections or rejects the
+ * TLS handshake, there is no point letting HttpAnalyzer attempt (and
+ * redundantly fail at) its own connection to the same target. Each
+ * phase's failure is translated into a specific AnalysisException
+ * reason and message based on its own failure category, rather than
  * always reporting a generic connection failure. An out-of-range
  * destination port is a request problem, not a target one, so it is
  * translated into InvalidUrlException (400) instead.
  * <p>
- * PhaseResult from DnsAnalyzer/TcpAnalyzer is unwrapped back into the
- * existing flat DnsResult/TcpResult shapes here, so AnalyzeResponse's
- * JSON contract stays a simple, flat-per-phase object rather than
- * exposing the generic phase/status wrapper to API consumers.
+ * PhaseResult from DnsAnalyzer/TcpAnalyzer/TlsAnalyzer is unwrapped
+ * back into the existing flat DnsResult/TcpResult/TlsResult shapes
+ * here, so AnalyzeResponse's JSON contract stays a simple,
+ * flat-per-phase object rather than exposing the generic phase/status
+ * wrapper to API consumers.
  */
 @Service
 public class AnalysisService {
@@ -46,13 +54,19 @@ public class AnalysisService {
     private final UrlValidator urlValidator;
     private final DnsAnalyzer dnsAnalyzer;
     private final TcpAnalyzer tcpAnalyzer;
+    private final TlsAnalyzer tlsAnalyzer;
     private final HttpAnalyzer httpAnalyzer;
 
     public AnalysisService(
-            UrlValidator urlValidator, DnsAnalyzer dnsAnalyzer, TcpAnalyzer tcpAnalyzer, HttpAnalyzer httpAnalyzer) {
+            UrlValidator urlValidator,
+            DnsAnalyzer dnsAnalyzer,
+            TcpAnalyzer tcpAnalyzer,
+            TlsAnalyzer tlsAnalyzer,
+            HttpAnalyzer httpAnalyzer) {
         this.urlValidator = urlValidator;
         this.dnsAnalyzer = dnsAnalyzer;
         this.tcpAnalyzer = tcpAnalyzer;
+        this.tlsAnalyzer = tlsAnalyzer;
         this.httpAnalyzer = httpAnalyzer;
     }
 
@@ -83,9 +97,23 @@ public class AnalysisService {
         }
         TcpResult tcp = new TcpResult(resolvedIp, port, tcpPhase.durationMs());
 
+        TlsResult tls = null;
+        if (isHttps(url)) {
+            PhaseResult<TlsMetadata> tlsPhase = tlsAnalyzer.analyze(dns.hostname(), resolvedIp, port);
+            if (tlsPhase.status() == PhaseResult.Status.FAILURE) {
+                throw tlsFailure(dns.hostname(), resolvedIp, port, tlsPhase.metadata().failureReason());
+            }
+            tls = new TlsResult(
+                    tlsPhase.metadata().tlsVersion(),
+                    tlsPhase.metadata().cipherSuite(),
+                    tlsPhase.metadata().certificateSubject(),
+                    tlsPhase.metadata().certificateIssuer(),
+                    tlsPhase.durationMs());
+        }
+
         HttpResult http = httpAnalyzer.analyze(url);
 
-        return new AnalyzeResponse(http.url(), dns, tcp, http.statusCode(), http.totalTimeMs());
+        return new AnalyzeResponse(http.url(), dns, tcp, tls, http.statusCode(), http.totalTimeMs());
     }
 
     private static AnalysisException tcpFailure(String host, int port, TcpFailureReason reason) {
@@ -102,11 +130,29 @@ public class AnalysisService {
         };
     }
 
+    private static AnalysisException tlsFailure(String hostname, String resolvedIp, int port, TlsFailureReason reason) {
+        String target = hostname + " (" + resolvedIp + ":" + port + ")";
+        return switch (reason) {
+            case TIMEOUT -> new AnalysisException(AnalysisException.Reason.TIMEOUT,
+                    "TLS handshake with " + target + " timed out", null);
+            case CONNECTION_FAILURE -> new AnalysisException(AnalysisException.Reason.CONNECTION_FAILURE,
+                    "Failed to connect to " + target + " for the TLS handshake", null);
+            case HANDSHAKE_FAILURE -> new AnalysisException(AnalysisException.Reason.CONNECTION_FAILURE,
+                    "TLS handshake with " + target + " failed", null);
+            case UNKNOWN -> new AnalysisException(AnalysisException.Reason.CONNECTION_FAILURE,
+                    "TLS handshake with " + target + " failed", null);
+        };
+    }
+
+    private static boolean isHttps(String url) {
+        return "https".equalsIgnoreCase(URI.create(url).getScheme());
+    }
+
     private static int portOf(String url) {
         URI uri = URI.create(url);
         if (uri.getPort() != -1) {
             return uri.getPort();
         }
-        return "https".equalsIgnoreCase(uri.getScheme()) ? 443 : 80;
+        return isHttps(url) ? 443 : 80;
     }
 }

@@ -61,6 +61,12 @@ class AnalyzeEndpointIntegrationTest {
         assertThat(response.getBody().tcp().host()).isEqualTo(response.getBody().dns().resolvedIps().get(0));
         assertThat(response.getBody().tcp().port()).isEqualTo(443);
         assertThat(response.getBody().tcp().durationMs()).isGreaterThanOrEqualTo(0);
+        assertThat(response.getBody().tls()).isNotNull();
+        assertThat(response.getBody().tls().tlsVersion()).startsWith("TLSv1");
+        assertThat(response.getBody().tls().cipherSuite()).isNotBlank();
+        assertThat(response.getBody().tls().certificateSubject()).isNotBlank();
+        assertThat(response.getBody().tls().certificateIssuer()).isNotBlank();
+        assertThat(response.getBody().tls().durationMs()).isGreaterThanOrEqualTo(0);
     }
 
     @Test
@@ -86,6 +92,7 @@ class AnalyzeEndpointIntegrationTest {
         assertThat(response.getBody().tcp()).isNotNull();
         assertThat(response.getBody().tcp().port()).isEqualTo(localServer.getAddress().getPort());
         assertThat(response.getBody().tcp().durationMs()).isGreaterThanOrEqualTo(0);
+        assertThat(response.getBody().tls()).isNull();
     }
 
     @Test

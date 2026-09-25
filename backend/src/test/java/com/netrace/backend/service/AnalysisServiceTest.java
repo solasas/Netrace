@@ -4,6 +4,7 @@ import com.netrace.backend.analyzer.AnalysisException;
 import com.netrace.backend.analyzer.DnsAnalyzer;
 import com.netrace.backend.analyzer.HttpAnalyzer;
 import com.netrace.backend.analyzer.TcpAnalyzer;
+import com.netrace.backend.analyzer.TlsAnalyzer;
 import com.netrace.backend.dto.AnalyzeRequest;
 import com.netrace.backend.dto.AnalyzeResponse;
 import com.netrace.backend.dto.DnsMetadata;
@@ -13,6 +14,9 @@ import com.netrace.backend.dto.PhaseResult;
 import com.netrace.backend.dto.TcpFailureReason;
 import com.netrace.backend.dto.TcpMetadata;
 import com.netrace.backend.dto.TcpResult;
+import com.netrace.backend.dto.TlsFailureReason;
+import com.netrace.backend.dto.TlsMetadata;
+import com.netrace.backend.dto.TlsResult;
 import com.netrace.backend.validation.UrlValidator;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -43,6 +47,9 @@ class AnalysisServiceTest {
     private TcpAnalyzer tcpAnalyzer;
 
     @Mock
+    private TlsAnalyzer tlsAnalyzer;
+
+    @Mock
     private HttpAnalyzer httpAnalyzer;
 
     private static PhaseResult<DnsMetadata> dnsSuccess(String hostname, String ip) {
@@ -53,23 +60,47 @@ class AnalysisServiceTest {
         return PhaseResult.success("TCP", 8L, new TcpMetadata(ip, port));
     }
 
-    @Test
-    void combinesDnsTcpAndHttpResultsWhenTheUrlIsValid() {
-        String url = "https://example.com";
-        PhaseResult<DnsMetadata> dnsPhase = dnsSuccess("example.com", "93.184.216.34");
-        PhaseResult<TcpMetadata> tcpPhase = tcpSuccess("93.184.216.34", 443);
-        HttpResult http = new HttpResult(url, 200, 42L);
-        when(urlValidator.isValid(url)).thenReturn(true);
-        when(dnsAnalyzer.analyze(url)).thenReturn(dnsPhase);
-        when(tcpAnalyzer.analyze("93.184.216.34", 443)).thenReturn(tcpPhase);
-        when(httpAnalyzer.analyze(url)).thenReturn(http);
-        AnalysisService service = new AnalysisService(urlValidator, dnsAnalyzer, tcpAnalyzer, httpAnalyzer);
+    private static PhaseResult<TlsMetadata> tlsSuccess(String hostname, String ip, int port) {
+        return PhaseResult.success("TLS", 20L,
+                new TlsMetadata(hostname, ip, port, "TLSv1.3", "TLS_AES_128_GCM_SHA256",
+                        "CN=" + hostname, "CN=Test CA", null));
+    }
 
-        AnalyzeResponse actual = service.analyze(new AnalyzeRequest(url));
+    private AnalysisService service() {
+        return new AnalysisService(urlValidator, dnsAnalyzer, tcpAnalyzer, tlsAnalyzer, httpAnalyzer);
+    }
+
+    @Test
+    void combinesDnsTcpTlsAndHttpResultsForAnHttpsUrl() {
+        String url = "https://example.com";
+        when(urlValidator.isValid(url)).thenReturn(true);
+        when(dnsAnalyzer.analyze(url)).thenReturn(dnsSuccess("example.com", "93.184.216.34"));
+        when(tcpAnalyzer.analyze("93.184.216.34", 443)).thenReturn(tcpSuccess("93.184.216.34", 443));
+        when(tlsAnalyzer.analyze("example.com", "93.184.216.34", 443))
+                .thenReturn(tlsSuccess("example.com", "93.184.216.34", 443));
+        when(httpAnalyzer.analyze(url)).thenReturn(new HttpResult(url, 200, 42L));
+
+        AnalyzeResponse actual = service().analyze(new AnalyzeRequest(url));
 
         DnsResult expectedDns = new DnsResult("example.com", List.of("93.184.216.34"), 12L);
         TcpResult expectedTcp = new TcpResult("93.184.216.34", 443, 8L);
-        assertThat(actual).isEqualTo(new AnalyzeResponse(url, expectedDns, expectedTcp, 200, 42L));
+        TlsResult expectedTls =
+                new TlsResult("TLSv1.3", "TLS_AES_128_GCM_SHA256", "CN=example.com", "CN=Test CA", 20L);
+        assertThat(actual).isEqualTo(new AnalyzeResponse(url, expectedDns, expectedTcp, expectedTls, 200, 42L));
+    }
+
+    @Test
+    void skipsTlsEntirelyForAnHttpUrl() {
+        String url = "http://example.com/";
+        when(urlValidator.isValid(url)).thenReturn(true);
+        when(dnsAnalyzer.analyze(url)).thenReturn(dnsSuccess("example.com", "93.184.216.34"));
+        when(tcpAnalyzer.analyze("93.184.216.34", 80)).thenReturn(tcpSuccess("93.184.216.34", 80));
+        when(httpAnalyzer.analyze(url)).thenReturn(new HttpResult(url, 200, 42L));
+
+        AnalyzeResponse actual = service().analyze(new AnalyzeRequest(url));
+
+        assertThat(actual.tls()).isNull();
+        verifyNoInteractions(tlsAnalyzer);
     }
 
     @Test
@@ -78,12 +109,14 @@ class AnalysisServiceTest {
         when(urlValidator.isValid(url)).thenReturn(true);
         when(dnsAnalyzer.analyze(url)).thenReturn(dnsSuccess("example.com", "93.184.216.34"));
         when(tcpAnalyzer.analyze("93.184.216.34", 8443)).thenReturn(tcpSuccess("93.184.216.34", 8443));
+        when(tlsAnalyzer.analyze("example.com", "93.184.216.34", 8443))
+                .thenReturn(tlsSuccess("example.com", "93.184.216.34", 8443));
         when(httpAnalyzer.analyze(url)).thenReturn(new HttpResult(url, 200, 42L));
-        AnalysisService service = new AnalysisService(urlValidator, dnsAnalyzer, tcpAnalyzer, httpAnalyzer);
 
-        service.analyze(new AnalyzeRequest(url));
+        service().analyze(new AnalyzeRequest(url));
 
         verify(tcpAnalyzer).analyze(eq("93.184.216.34"), eq(8443));
+        verify(tlsAnalyzer).analyze(eq("example.com"), eq("93.184.216.34"), eq(8443));
     }
 
     @Test
@@ -93,58 +126,81 @@ class AnalysisServiceTest {
         when(dnsAnalyzer.analyze(url)).thenReturn(dnsSuccess("example.com", "93.184.216.34"));
         when(tcpAnalyzer.analyze("93.184.216.34", 80)).thenReturn(tcpSuccess("93.184.216.34", 80));
         when(httpAnalyzer.analyze(url)).thenReturn(new HttpResult(url, 200, 42L));
-        AnalysisService service = new AnalysisService(urlValidator, dnsAnalyzer, tcpAnalyzer, httpAnalyzer);
 
-        service.analyze(new AnalyzeRequest(url));
+        service().analyze(new AnalyzeRequest(url));
 
         verify(tcpAnalyzer).analyze(eq("93.184.216.34"), eq(80));
+        verifyNoInteractions(tlsAnalyzer);
     }
 
     @Test
     void rejectsAnInvalidUrlWithoutCallingAnyAnalyzer() {
         String url = "not a url";
         when(urlValidator.isValid(url)).thenReturn(false);
-        AnalysisService service = new AnalysisService(urlValidator, dnsAnalyzer, tcpAnalyzer, httpAnalyzer);
 
-        assertThatThrownBy(() -> service.analyze(new AnalyzeRequest(url)))
+        assertThatThrownBy(() -> service().analyze(new AnalyzeRequest(url)))
                 .isInstanceOf(InvalidUrlException.class);
 
         verifyNoInteractions(dnsAnalyzer);
         verifyNoInteractions(tcpAnalyzer);
+        verifyNoInteractions(tlsAnalyzer);
         verifyNoInteractions(httpAnalyzer);
     }
 
     @Test
-    void propagatesADnsFailureWithoutCallingTcpOrHttp() {
+    void propagatesADnsFailureWithoutCallingTcpTlsOrHttp() {
         String url = "https://example.com";
         AnalysisException failure = new AnalysisException(
                 AnalysisException.Reason.DNS_FAILURE, "boom", new RuntimeException());
         when(urlValidator.isValid(url)).thenReturn(true);
         when(dnsAnalyzer.analyze(url)).thenThrow(failure);
-        AnalysisService service = new AnalysisService(urlValidator, dnsAnalyzer, tcpAnalyzer, httpAnalyzer);
 
-        assertThatThrownBy(() -> service.analyze(new AnalyzeRequest(url)))
+        assertThatThrownBy(() -> service().analyze(new AnalyzeRequest(url)))
                 .isSameAs(failure);
 
         verifyNoInteractions(tcpAnalyzer);
+        verifyNoInteractions(tlsAnalyzer);
         verifyNoInteractions(httpAnalyzer);
     }
 
     @ParameterizedTest
     @EnumSource(TcpFailureReason.class)
-    void mapsEachTcpFailureReasonToAnAnalysisExceptionWithoutCallingHttp(TcpFailureReason tcpReason) {
+    void mapsEachTcpFailureReasonToAnAnalysisExceptionWithoutCallingTlsOrHttp(TcpFailureReason tcpReason) {
         String url = "https://example.com";
         when(urlValidator.isValid(url)).thenReturn(true);
         when(dnsAnalyzer.analyze(url)).thenReturn(dnsSuccess("example.com", "93.184.216.34"));
         when(tcpAnalyzer.analyze("93.184.216.34", 443))
                 .thenReturn(PhaseResult.failure("TCP", 5000L, new TcpMetadata("93.184.216.34", 443, tcpReason)));
-        AnalysisService service = new AnalysisService(urlValidator, dnsAnalyzer, tcpAnalyzer, httpAnalyzer);
 
         AnalysisException.Reason expected = tcpReason == TcpFailureReason.TIMEOUT
                 ? AnalysisException.Reason.TIMEOUT
                 : AnalysisException.Reason.CONNECTION_FAILURE;
 
-        assertThatThrownBy(() -> service.analyze(new AnalyzeRequest(url)))
+        assertThatThrownBy(() -> service().analyze(new AnalyzeRequest(url)))
+                .isInstanceOf(AnalysisException.class)
+                .extracting(e -> ((AnalysisException) e).reason())
+                .isEqualTo(expected);
+
+        verifyNoInteractions(tlsAnalyzer);
+        verifyNoInteractions(httpAnalyzer);
+    }
+
+    @ParameterizedTest
+    @EnumSource(TlsFailureReason.class)
+    void mapsEachTlsFailureReasonToAnAnalysisExceptionWithoutCallingHttp(TlsFailureReason tlsReason) {
+        String url = "https://example.com";
+        when(urlValidator.isValid(url)).thenReturn(true);
+        when(dnsAnalyzer.analyze(url)).thenReturn(dnsSuccess("example.com", "93.184.216.34"));
+        when(tcpAnalyzer.analyze("93.184.216.34", 443)).thenReturn(tcpSuccess("93.184.216.34", 443));
+        when(tlsAnalyzer.analyze("example.com", "93.184.216.34", 443))
+                .thenReturn(PhaseResult.failure("TLS", 5000L,
+                        new TlsMetadata("example.com", "93.184.216.34", 443, tlsReason)));
+
+        AnalysisException.Reason expected = tlsReason == TlsFailureReason.TIMEOUT
+                ? AnalysisException.Reason.TIMEOUT
+                : AnalysisException.Reason.CONNECTION_FAILURE;
+
+        assertThatThrownBy(() -> service().analyze(new AnalyzeRequest(url)))
                 .isInstanceOf(AnalysisException.class)
                 .extracting(e -> ((AnalysisException) e).reason())
                 .isEqualTo(expected);
@@ -159,26 +215,27 @@ class AnalysisServiceTest {
         when(dnsAnalyzer.analyze(url)).thenReturn(dnsSuccess("example.com", "93.184.216.34"));
         when(tcpAnalyzer.analyze("93.184.216.34", 99999))
                 .thenThrow(new IllegalArgumentException("Invalid destination port: 99999"));
-        AnalysisService service = new AnalysisService(urlValidator, dnsAnalyzer, tcpAnalyzer, httpAnalyzer);
 
-        assertThatThrownBy(() -> service.analyze(new AnalyzeRequest(url)))
+        assertThatThrownBy(() -> service().analyze(new AnalyzeRequest(url)))
                 .isInstanceOf(InvalidUrlException.class);
 
+        verifyNoInteractions(tlsAnalyzer);
         verifyNoInteractions(httpAnalyzer);
     }
 
     @Test
-    void propagatesAnHttpFailureAfterDnsAndTcpSucceed() {
+    void propagatesAnHttpFailureAfterDnsTcpAndTlsSucceed() {
         String url = "https://example.com";
         AnalysisException failure = new AnalysisException(
                 AnalysisException.Reason.INVALID_RESPONSE, "boom", new RuntimeException());
         when(urlValidator.isValid(url)).thenReturn(true);
         when(dnsAnalyzer.analyze(url)).thenReturn(dnsSuccess("example.com", "93.184.216.34"));
         when(tcpAnalyzer.analyze("93.184.216.34", 443)).thenReturn(tcpSuccess("93.184.216.34", 443));
+        when(tlsAnalyzer.analyze("example.com", "93.184.216.34", 443))
+                .thenReturn(tlsSuccess("example.com", "93.184.216.34", 443));
         when(httpAnalyzer.analyze(url)).thenThrow(failure);
-        AnalysisService service = new AnalysisService(urlValidator, dnsAnalyzer, tcpAnalyzer, httpAnalyzer);
 
-        assertThatThrownBy(() -> service.analyze(new AnalyzeRequest(url)))
+        assertThatThrownBy(() -> service().analyze(new AnalyzeRequest(url)))
                 .isSameAs(failure);
     }
 }
