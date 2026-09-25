@@ -78,7 +78,7 @@ class AnalysisServiceTest {
         when(tcpAnalyzer.analyze("93.184.216.34", 443)).thenReturn(tcpSuccess("93.184.216.34", 443));
         when(tlsAnalyzer.analyze("example.com", "93.184.216.34", 443))
                 .thenReturn(tlsSuccess("example.com", "93.184.216.34", 443));
-        when(httpAnalyzer.analyze(url)).thenReturn(new HttpResult(url, 200, 42L));
+        when(httpAnalyzer.analyze(url)).thenReturn(new HttpResult(url, 200, 42L, 30L));
 
         AnalyzeResponse actual = service().analyze(new AnalyzeRequest(url));
 
@@ -95,7 +95,7 @@ class AnalysisServiceTest {
         when(urlValidator.isValid(url)).thenReturn(true);
         when(dnsAnalyzer.analyze(url)).thenReturn(dnsSuccess("example.com", "93.184.216.34"));
         when(tcpAnalyzer.analyze("93.184.216.34", 80)).thenReturn(tcpSuccess("93.184.216.34", 80));
-        when(httpAnalyzer.analyze(url)).thenReturn(new HttpResult(url, 200, 42L));
+        when(httpAnalyzer.analyze(url)).thenReturn(new HttpResult(url, 200, 42L, 30L));
 
         AnalyzeResponse actual = service().analyze(new AnalyzeRequest(url));
 
@@ -111,7 +111,7 @@ class AnalysisServiceTest {
         when(tcpAnalyzer.analyze("93.184.216.34", 8443)).thenReturn(tcpSuccess("93.184.216.34", 8443));
         when(tlsAnalyzer.analyze("example.com", "93.184.216.34", 8443))
                 .thenReturn(tlsSuccess("example.com", "93.184.216.34", 8443));
-        when(httpAnalyzer.analyze(url)).thenReturn(new HttpResult(url, 200, 42L));
+        when(httpAnalyzer.analyze(url)).thenReturn(new HttpResult(url, 200, 42L, 30L));
 
         service().analyze(new AnalyzeRequest(url));
 
@@ -125,7 +125,7 @@ class AnalysisServiceTest {
         when(urlValidator.isValid(url)).thenReturn(true);
         when(dnsAnalyzer.analyze(url)).thenReturn(dnsSuccess("example.com", "93.184.216.34"));
         when(tcpAnalyzer.analyze("93.184.216.34", 80)).thenReturn(tcpSuccess("93.184.216.34", 80));
-        when(httpAnalyzer.analyze(url)).thenReturn(new HttpResult(url, 200, 42L));
+        when(httpAnalyzer.analyze(url)).thenReturn(new HttpResult(url, 200, 42L, 30L));
 
         service().analyze(new AnalyzeRequest(url));
 

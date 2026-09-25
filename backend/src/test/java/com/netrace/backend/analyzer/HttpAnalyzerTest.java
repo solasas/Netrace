@@ -49,6 +49,38 @@ class HttpAnalyzerTest {
         assertThat(response.statusCode()).isEqualTo(200);
         assertThat(response.url()).isEqualTo(url);
         assertThat(response.totalTimeMs()).isGreaterThanOrEqualTo(0);
+        assertThat(response.ttfbMs()).isGreaterThanOrEqualTo(0);
+        assertThat(response.ttfbMs()).isLessThanOrEqualTo(response.totalTimeMs());
+    }
+
+    @Test
+    void measuresTtfbSeparatelyFromDownloadTimeRatherThanFakingItAsTheTotal() throws IOException {
+        // The server sends headers immediately, then deliberately delays
+        // before writing the body. If ttfbMs were just an alias for
+        // totalTimeMs (faked), it would also include that delay; a real
+        // TTFB measurement must be captured before the delay happens.
+        server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
+        byte[] body = "this body arrives well after the headers do".getBytes(StandardCharsets.US_ASCII);
+        server.createContext("/slow-body", exchange -> {
+            exchange.sendResponseHeaders(200, body.length);
+            try {
+                Thread.sleep(300);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            try (OutputStream out = exchange.getResponseBody()) {
+                out.write(body);
+            }
+        });
+        server.start();
+        String url = "http://localhost:" + server.getAddress().getPort() + "/slow-body";
+
+        HttpResult response = newAnalyzer().analyze(url);
+
+        assertThat(response.ttfbMs()).isLessThan(response.totalTimeMs());
+        assertThat(response.totalTimeMs() - response.ttfbMs())
+                .as("the gap between ttfb and total should reflect the body delay, not be ~0")
+                .isGreaterThanOrEqualTo(200);
     }
 
     @Test

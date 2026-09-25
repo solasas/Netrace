@@ -17,12 +17,26 @@ import java.time.Duration;
 
 /**
  * Makes a real HTTP(S) request to an already-validated URL and reports
- * the observed status code, final URL (after redirects), and total
- * elapsed time. This still performs its own internal DNS resolution as
- * part of connecting (via HttpClient) - it does not reuse DnsAnalyzer's
- * result - so totalTimeMs includes that internal resolution too, on top
- * of whatever DnsAnalyzer separately measured beforehand. TCP/TLS phase
- * timing is not broken out yet.
+ * the observed status code, final URL (after redirects), total elapsed
+ * time, and time to first byte (TTFB). This still performs its own
+ * internal DNS resolution as part of connecting (via HttpClient) - it
+ * does not reuse DnsAnalyzer's result - so totalTimeMs includes that
+ * internal resolution too, on top of whatever DnsAnalyzer separately
+ * measured beforehand. TCP/TLS phase timing is not broken out here
+ * either.
+ * <p>
+ * ttfbMs is measured from the same starting point as totalTimeMs
+ * (right before the request is sent) to the moment
+ * HttpResponse.BodyHandler.apply(ResponseInfo) is invoked - the point
+ * at which the JDK's HTTP client has received and parsed the response
+ * status line and headers, before any body bytes are delivered to a
+ * BodySubscriber. This is not the literal first physical byte on the
+ * wire (unobservable without packet capture) and it is not "server
+ * processing time" in isolation: like totalTimeMs, it bundles this
+ * analyzer's own connection setup and request-send time together with
+ * however long the server took to start responding. For a redirected
+ * request it reflects the final response's headers, not an
+ * intermediate hop's.
  */
 @Component
 public class HttpAnalyzer {
@@ -41,10 +55,11 @@ public class HttpAnalyzer {
                 .GET()
                 .build();
 
+        TtfbCapturingBodyHandler bodyHandler = new TtfbCapturingBodyHandler();
         long startNanos = System.nanoTime();
         HttpResponse<Void> response;
         try {
-            response = httpClient.send(request, HttpResponse.BodyHandlers.discarding());
+            response = httpClient.send(request, bodyHandler);
         } catch (HttpConnectTimeoutException e) {
             throw new AnalysisException(AnalysisException.Reason.TIMEOUT,
                     "Connection to " + url + " timed out", e);
@@ -66,7 +81,29 @@ public class HttpAnalyzer {
                     "Interrupted while contacting " + url, e);
         }
         long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000;
+        long ttfbMs = (bodyHandler.firstByteNanos() - startNanos) / 1_000_000;
 
-        return new HttpResult(response.uri().toString(), response.statusCode(), elapsedMs);
+        return new HttpResult(response.uri().toString(), response.statusCode(), elapsedMs, ttfbMs);
+    }
+
+    /**
+     * Times the moment the response status line and headers become
+     * available, then discards the body exactly like the previous
+     * BodyHandlers.discarding() did - this class only adds a timestamp
+     * around that existing behavior.
+     */
+    private static final class TtfbCapturingBodyHandler implements HttpResponse.BodyHandler<Void> {
+
+        private long firstByteNanos;
+
+        @Override
+        public HttpResponse.BodySubscriber<Void> apply(HttpResponse.ResponseInfo responseInfo) {
+            firstByteNanos = System.nanoTime();
+            return HttpResponse.BodySubscribers.discarding();
+        }
+
+        long firstByteNanos() {
+            return firstByteNanos;
+        }
     }
 }
