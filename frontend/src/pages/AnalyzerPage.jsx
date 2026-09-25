@@ -3,6 +3,7 @@ import AnalysisSummary from '../components/AnalysisSummary'
 import Button from '../components/Button'
 import DnsDetails from '../components/DnsDetails'
 import ErrorMessage from '../components/ErrorMessage'
+import TcpDetails from '../components/TcpDetails'
 import TextInput from '../components/TextInput'
 import { analyzeUrl } from '../services/analyzeService'
 
@@ -71,6 +72,13 @@ function AnalyzerPage() {
         <>
           <AnalysisSummary url={submittedUrl} result={result} />
           <DnsDetails dns={result.probes?.dns} />
+          {result.probes?.tcp && (
+            <TcpDetails
+              host={result.probes.tcp.host}
+              port={result.probes.tcp.port}
+              durationMs={result.probes.tcp.durationMs}
+            />
+          )}
         </>
       )}
     </main>
