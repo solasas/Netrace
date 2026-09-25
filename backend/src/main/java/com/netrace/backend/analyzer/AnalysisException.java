@@ -6,7 +6,8 @@ public class AnalysisException extends RuntimeException {
         CONNECTION_FAILURE,
         DNS_FAILURE,
         TIMEOUT,
-        INVALID_RESPONSE
+        INVALID_RESPONSE,
+        BLOCKED_TARGET
     }
 
     private final Reason reason;

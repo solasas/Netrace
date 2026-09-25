@@ -15,17 +15,26 @@ import org.springframework.http.ResponseEntity;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
-import java.net.ServerSocket;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Full-stack tests against the real /api/analyze endpoint: real Spring
- * context, real validation/analyzer/service wiring, over a real embedded
- * HTTP server. Only the HTTPS success case reaches the public internet,
- * and it targets example.com specifically because it's IANA-reserved for
- * this purpose and has none of the instability a random public site
- * would. Every other case uses a local, fully controlled server.
+ * context, real validation/analyzer/service wiring. The success cases
+ * reach the public internet and target example.com specifically
+ * because it's IANA-reserved for this purpose and has none of the
+ * instability a random public site would.
+ * <p>
+ * There is deliberately no "analyzes a local HTTP server successfully"
+ * test here: with the real, default SsrfGuard-backed target guard
+ * active (netrace.analyzer.allow-private-targets is NOT overridden in
+ * this class), a local server on localhost is exactly what should be
+ * refused - see blocksALocalHttpUrlAsAnSsrfTarget below, and
+ * docs/security.md for the full threat model. Tests that need a real,
+ * controllable local server for scenarios other than SSRF blocking
+ * (timeouts, connection-refused) live in
+ * AnalyzeEndpointLocalTargetIntegrationTest, which explicitly opts into
+ * allow-private-targets=true for that purpose.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @AutoConfigureTestRestTemplate
@@ -80,39 +89,45 @@ class AnalyzeEndpointIntegrationTest {
     }
 
     @Test
-    void analyzesALocalHttpUrlSuccessfully() throws IOException {
-        byte[] body = "hello from a local http server".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
-        localServer = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
-        localServer.createContext("/ok", exchange -> {
-            exchange.getResponseHeaders().add("Content-Type", "text/plain");
-            exchange.sendResponseHeaders(200, body.length);
-            try (java.io.OutputStream out = exchange.getResponseBody()) {
-                out.write(body);
-            }
-        });
-        localServer.start();
-        String url = "http://localhost:" + localServer.getAddress().getPort() + "/ok";
-
+    void analyzesARealHttpUrlSuccessfully() {
         ResponseEntity<AnalyzeResponse> response = restTemplate.postForEntity(
-                "/api/analyze", new AnalyzeRequest(url), AnalyzeResponse.class);
+                "/api/analyze", new AnalyzeRequest("http://example.com"), AnalyzeResponse.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(response.getBody()).isNotNull();
         assertThat(response.getBody().statusCode()).isEqualTo(200);
-        assertThat(response.getBody().url()).isEqualTo(url);
+        assertThat(response.getBody().url()).startsWith("http://example.com");
         assertThat(response.getBody().ttfbMs() + response.getBody().downloadMs())
                 .isEqualTo(response.getBody().totalTimeMs());
-        assertThat(response.getBody().bodyTruncated()).isFalse();
         assertThat(response.getBody().probes().dns()).isNotNull();
-        assertThat(response.getBody().probes().dns().hostname()).isEqualTo("localhost");
-        assertThat(response.getBody().probes().dns().resolvedIps()).isNotEmpty();
+        assertThat(response.getBody().probes().dns().hostname()).isEqualTo("example.com");
         assertThat(response.getBody().probes().tcp()).isNotNull();
-        assertThat(response.getBody().probes().tcp().port()).isEqualTo(localServer.getAddress().getPort());
-        assertThat(response.getBody().probes().tcp().durationMs()).isGreaterThanOrEqualTo(0);
+        assertThat(response.getBody().probes().tcp().port()).isEqualTo(80);
         assertThat(response.getBody().probes().tls()).isNull();
-        assertThat(response.getBody().protocol()).isEqualTo("HTTP/1.1");
-        assertThat(response.getBody().contentType()).isEqualTo("text/plain");
-        assertThat(response.getBody().contentLength()).isEqualTo((long) body.length);
+        assertThat(response.getBody().protocol()).isIn("HTTP/1.1", "HTTP/2");
+    }
+
+    @Test
+    void blocksALocalHttpUrlAsAnSsrfTarget() throws IOException {
+        // Proves the SSRF guard is wired all the way through the real
+        // stack, not just at the unit level: the local server below is
+        // never actually reached, because localhost resolves to a
+        // loopback address the default-configured guard refuses before
+        // any TCP connection is attempted. See docs/security.md.
+        localServer = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
+        localServer.createContext("/ok", exchange -> {
+            exchange.sendResponseHeaders(200, -1);
+            exchange.close();
+        });
+        localServer.start();
+        String url = "http://localhost:" + localServer.getAddress().getPort() + "/ok";
+
+        ResponseEntity<ErrorResponse> response = restTemplate.postForEntity(
+                "/api/analyze", new AnalyzeRequest(url), ErrorResponse.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().error()).isEqualTo("BLOCKED_TARGET");
     }
 
     @Test
@@ -133,20 +148,5 @@ class AnalyzeEndpointIntegrationTest {
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
         assertThat(response.getBody()).isNotNull();
         assertThat(response.getBody().error()).isEqualTo("INVALID_URL");
-    }
-
-    @Test
-    void reportsAConnectionFailureForAnUnreachableHost() throws IOException {
-        int freePort;
-        try (ServerSocket probe = new ServerSocket(0)) {
-            freePort = probe.getLocalPort();
-        }
-
-        ResponseEntity<ErrorResponse> response = restTemplate.postForEntity(
-                "/api/analyze", new AnalyzeRequest("http://localhost:" + freePort + "/"), ErrorResponse.class);
-
-        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_GATEWAY);
-        assertThat(response.getBody()).isNotNull();
-        assertThat(response.getBody().error()).isEqualTo("CONNECTION_FAILURE");
     }
 }

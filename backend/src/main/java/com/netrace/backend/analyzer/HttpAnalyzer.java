@@ -2,10 +2,13 @@ package com.netrace.backend.analyzer;
 
 import com.netrace.backend.config.AnalyzerProperties;
 import com.netrace.backend.dto.HttpResult;
+import com.netrace.backend.security.SsrfGuard;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.net.ConnectException;
+import java.net.InetAddress;
 import java.net.URI;
 import java.net.UnknownHostException;
 import java.net.http.HttpClient;
@@ -17,6 +20,7 @@ import java.nio.ByteBuffer;
 import java.time.Duration;
 import java.util.List;
 import java.util.OptionalLong;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.Flow;
@@ -32,20 +36,35 @@ import java.util.concurrent.atomic.AtomicLong;
  * whatever DnsAnalyzer separately measured beforehand. TCP/TLS phase
  * timing is not broken out here either.
  * <p>
+ * <b>Redirects are followed manually, one hop at a time, not by the
+ * underlying HttpClient (which is configured with Redirect.NEVER).</b>
+ * Before every hop - the original URL and every redirect target -
+ * {@link #validateTargetIsAllowed(String)} resolves the host and
+ * rejects it via {@link SsrfGuard} if any resolved address is private,
+ * loopback, link-local, or otherwise reserved, and rejects any redirect
+ * to a non-http(s) scheme outright. Without this, a target could pass
+ * validation with a public IP and then redirect the client to an
+ * internal address the automatic redirect-follower would connect to
+ * without ever being checked. See docs/security.md for the full threat
+ * model and this project's disclosed limitations (notably: this
+ * revalidates on every hop, but does not close every DNS-rebinding
+ * timing gap between validating an address and connecting to it).
+ * Capped at {@code netrace.analyzer.max-redirects} hops.
+ * <p>
  * ttfbMs is measured from the same starting point as totalTimeMs
- * (right before the request is sent) to the moment
- * HttpResponse.BodyHandler.apply(ResponseInfo) is invoked - the point
- * at which the JDK's HTTP client has received and parsed the response
- * status line and headers, before any body bytes are delivered to a
- * BodySubscriber. This is not the literal first physical byte on the
- * wire (unobservable without packet capture) and it is not "server
- * processing time" in isolation: like totalTimeMs, it bundles this
- * analyzer's own connection setup and request-send time together with
- * however long the server took to start responding. For a redirected
- * request it reflects the final response's headers, not an
- * intermediate hop's. downloadMs is simply totalTimeMs - ttfbMs: a
- * real derived duration from those same two real timestamps, not a
- * separately-estimated figure.
+ * (right before the first request is sent) to the moment
+ * HttpResponse.BodyHandler.apply(ResponseInfo) is invoked for the
+ * final (non-redirect) response - the point at which the JDK's HTTP
+ * client has received and parsed that response's status line and
+ * headers, before any body bytes are delivered to a BodySubscriber.
+ * This is not the literal first physical byte on the wire (unobservable
+ * without packet capture) and it is not "server processing time" in
+ * isolation: like totalTimeMs, it bundles this analyzer's own
+ * connection setup and request-send time - across every hop, including
+ * time spent on earlier redirects - together with however long the
+ * server took to start responding. downloadMs is simply
+ * totalTimeMs - ttfbMs: a real derived duration from those same two
+ * real timestamps, not a separately-estimated figure.
  * <p>
  * The response body is never fully buffered in memory (bytes are
  * discarded as they arrive, exactly as before), but bytes are still
@@ -55,7 +74,9 @@ import java.util.concurrent.atomic.AtomicLong;
  * to spend unbounded bandwidth/time on an arbitrarily large or
  * never-ending response. HttpResult.bodyTruncated reports when this
  * happened; downloadMs in that case is time spent up to the cutoff,
- * not what a full download would have taken.
+ * not what a full download would have taken. This same size limit
+ * applies to every intermediate redirect response's body too, not just
+ * the final one.
  * <p>
  * protocol reports response.version() - the HTTP version actually
  * negotiated for this specific response, not merely requested.
@@ -77,64 +98,153 @@ import java.util.concurrent.atomic.AtomicLong;
 @Component
 public class HttpAnalyzer {
 
+    private static final Set<Integer> REDIRECT_STATUS_CODES = Set.of(301, 302, 303, 307, 308);
+
+    /**
+     * Isolates "is this resolved address blocked" so tests can supply a
+     * permissive guard and exercise this class's other behavior (TTFB,
+     * truncation, redirects, protocol detection, ...) against a real
+     * local HttpServer, which is itself a loopback address and would
+     * otherwise always be refused. Production always uses SsrfGuard,
+     * via the public constructor, unless allowPrivateTargets is set.
+     */
+    @FunctionalInterface
+    interface TargetGuard {
+        boolean isBlocked(InetAddress address);
+    }
+
     private final HttpClient httpClient;
     private final Duration requestTimeout;
     private final long maxResponseBytes;
+    private final int maxRedirects;
+    private final TargetGuard targetGuard;
 
+    @Autowired
     public HttpAnalyzer(HttpClient httpClient, AnalyzerProperties analyzerProperties) {
+        this(httpClient, analyzerProperties,
+                analyzerProperties.allowPrivateTargets() ? address -> false : SsrfGuard::isBlocked);
+    }
+
+    HttpAnalyzer(HttpClient httpClient, AnalyzerProperties analyzerProperties, TargetGuard targetGuard) {
         long maxResponseBytes = analyzerProperties.maxResponseSize().toBytes();
         if (maxResponseBytes <= 0) {
             throw new IllegalStateException(
                     "netrace.analyzer.max-response-size must be positive, was "
                             + analyzerProperties.maxResponseSize());
         }
+        int maxRedirects = analyzerProperties.maxRedirects();
+        if (maxRedirects < 0) {
+            throw new IllegalStateException(
+                    "netrace.analyzer.max-redirects must not be negative, was " + maxRedirects);
+        }
         this.httpClient = httpClient;
         this.requestTimeout = analyzerProperties.requestTimeout();
         this.maxResponseBytes = maxResponseBytes;
+        this.maxRedirects = maxRedirects;
+        this.targetGuard = targetGuard;
     }
 
     public HttpResult analyze(String url) {
-        HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+        long startNanos = System.nanoTime();
+        String currentUrl = url;
+        int redirects = 0;
+
+        while (true) {
+            validateTargetIsAllowed(currentUrl);
+
+            TtfbCapturingBodyHandler bodyHandler = new TtfbCapturingBodyHandler(maxResponseBytes);
+            HttpResponse<Boolean> response = send(currentUrl, bodyHandler);
+
+            if (REDIRECT_STATUS_CODES.contains(response.statusCode())) {
+                String hopUrl = currentUrl;
+                String location = response.headers().firstValue("location")
+                        .orElseThrow(() -> new AnalysisException(AnalysisException.Reason.INVALID_RESPONSE,
+                                "Redirect from " + hopUrl + " had no Location header", null));
+                redirects++;
+                if (redirects > maxRedirects) {
+                    throw new AnalysisException(AnalysisException.Reason.INVALID_RESPONSE,
+                            "Too many redirects starting from " + url + " (limit " + maxRedirects + ")", null);
+                }
+                currentUrl = URI.create(currentUrl).resolve(location).toString();
+                continue;
+            }
+
+            long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000;
+            long ttfbMs = (bodyHandler.firstByteNanos() - startNanos) / 1_000_000;
+            long downloadMs = elapsedMs - ttfbMs;
+            boolean bodyTruncated = Boolean.TRUE.equals(response.body());
+            String protocol = protocolName(response.version());
+            OptionalLong contentLengthHeader = response.headers().firstValueAsLong("content-length");
+            Long contentLength = contentLengthHeader.isPresent() ? contentLengthHeader.getAsLong() : null;
+            String contentType = response.headers().firstValue("content-type").orElse(null);
+
+            return new HttpResult(response.uri().toString(), response.statusCode(), elapsedMs, ttfbMs, downloadMs,
+                    bodyTruncated, protocol, contentLength, contentType);
+        }
+    }
+
+    /**
+     * Resolves the host of urlString and rejects it if the scheme
+     * isn't http(s) or if SsrfGuard blocks any resolved address. Run
+     * before every hop - the original URL and every redirect target -
+     * so a redirect can never reach an address this analyzer would
+     * have refused to connect to directly. This is a fresh resolution
+     * separate from the one httpClient.send() performs moments later
+     * for the same hostname; see docs/security.md for why that gap
+     * (a narrow DNS-rebinding window) is disclosed rather than fully
+     * closed.
+     */
+    private void validateTargetIsAllowed(String urlString) {
+        URI uri = URI.create(urlString);
+        String scheme = uri.getScheme();
+        if (scheme == null || !("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme))) {
+            throw new AnalysisException(AnalysisException.Reason.BLOCKED_TARGET,
+                    "Refusing to follow a redirect to an unsupported scheme: " + urlString, null);
+        }
+
+        InetAddress[] addresses;
+        try {
+            addresses = InetAddress.getAllByName(uri.getHost());
+        } catch (UnknownHostException e) {
+            throw new AnalysisException(AnalysisException.Reason.DNS_FAILURE,
+                    "Could not resolve host for " + urlString, e);
+        }
+        for (InetAddress address : addresses) {
+            if (targetGuard.isBlocked(address)) {
+                throw new AnalysisException(AnalysisException.Reason.BLOCKED_TARGET,
+                        "Refusing to request " + urlString + ": resolves to a private or reserved address ("
+                                + address.getHostAddress() + ")", null);
+            }
+        }
+    }
+
+    private HttpResponse<Boolean> send(String urlString, TtfbCapturingBodyHandler bodyHandler) {
+        HttpRequest request = HttpRequest.newBuilder(URI.create(urlString))
                 .timeout(requestTimeout)
                 .GET()
                 .build();
-
-        TtfbCapturingBodyHandler bodyHandler = new TtfbCapturingBodyHandler(maxResponseBytes);
-        long startNanos = System.nanoTime();
-        HttpResponse<Boolean> response;
         try {
-            response = httpClient.send(request, bodyHandler);
+            return httpClient.send(request, bodyHandler);
         } catch (HttpConnectTimeoutException e) {
             throw new AnalysisException(AnalysisException.Reason.TIMEOUT,
-                    "Connection to " + url + " timed out", e);
+                    "Connection to " + urlString + " timed out", e);
         } catch (HttpTimeoutException e) {
             throw new AnalysisException(AnalysisException.Reason.TIMEOUT,
-                    "Request to " + url + " timed out", e);
+                    "Request to " + urlString + " timed out", e);
         } catch (UnknownHostException e) {
             throw new AnalysisException(AnalysisException.Reason.DNS_FAILURE,
-                    "Could not resolve host for " + url, e);
+                    "Could not resolve host for " + urlString, e);
         } catch (ConnectException e) {
             throw new AnalysisException(AnalysisException.Reason.CONNECTION_FAILURE,
-                    "Failed to connect to " + url, e);
+                    "Failed to connect to " + urlString, e);
         } catch (IOException e) {
             throw new AnalysisException(AnalysisException.Reason.INVALID_RESPONSE,
-                    "Invalid response from " + url, e);
+                    "Invalid response from " + urlString, e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new AnalysisException(AnalysisException.Reason.CONNECTION_FAILURE,
-                    "Interrupted while contacting " + url, e);
+                    "Interrupted while contacting " + urlString, e);
         }
-        long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000;
-        long ttfbMs = (bodyHandler.firstByteNanos() - startNanos) / 1_000_000;
-        long downloadMs = elapsedMs - ttfbMs;
-        boolean bodyTruncated = Boolean.TRUE.equals(response.body());
-        String protocol = protocolName(response.version());
-        OptionalLong contentLengthHeader = response.headers().firstValueAsLong("content-length");
-        Long contentLength = contentLengthHeader.isPresent() ? contentLengthHeader.getAsLong() : null;
-        String contentType = response.headers().firstValue("content-type").orElse(null);
-
-        return new HttpResult(response.uri().toString(), response.statusCode(), elapsedMs, ttfbMs, downloadMs,
-                bodyTruncated, protocol, contentLength, contentType);
     }
 
     private static String protocolName(HttpClient.Version version) {

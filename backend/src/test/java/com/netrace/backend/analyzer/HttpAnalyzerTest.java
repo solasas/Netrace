@@ -25,6 +25,17 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+/**
+ * Every test here targets a real local HttpServer on localhost -
+ * itself a loopback address the real, production SsrfGuard-backed
+ * target guard would refuse to connect to. newAnalyzer()/
+ * newAnalyzerWithMaxResponseSize() below build analyzers with a
+ * permissive guard so these tests can keep exercising everything else
+ * (TTFB, truncation, redirects, protocol detection, error mapping...)
+ * against a real, fully controlled local server. The real guard's
+ * blocking behavior is tested separately, deliberately against
+ * localhost, in HttpAnalyzerSsrfTest.
+ */
 class HttpAnalyzerTest {
 
     private HttpServer server;
@@ -292,15 +303,22 @@ class HttpAnalyzerTest {
 
     @Test
     void throwsADnsFailureWhenTheHostCannotBeResolved() throws IOException, InterruptedException {
-        // Real DNS behavior for unresolvable names isn't reliable across
-        // environments (some networks redirect NXDOMAIN instead of failing
-        // resolution), so this exercises the mapping directly.
+        // Uses example.com - a real, reliably-resolvable hostname - so
+        // the pre-flight SSRF resolution check (which does its own real
+        // DNS lookup before httpClient.send() is ever called) succeeds
+        // deterministically, and control reaches the mocked client
+        // below. That mock is what throws UnknownHostException here,
+        // isolating just the mapping from that exception to DNS_FAILURE
+        // without depending on any environment's real DNS failure
+        // behavior for an unresolvable name (found unreliable earlier
+        // in this project for reserved/unresolvable TLDs).
         HttpClient mockClient = mock(HttpClient.class);
-        when(mockClient.send(any(), any())).thenThrow(new UnknownHostException("does-not-resolve.example"));
+        when(mockClient.send(any(), any())).thenThrow(new UnknownHostException("simulated failure"));
         HttpAnalyzer analyzer = new HttpAnalyzer(mockClient,
-                new AnalyzerProperties(Duration.ofSeconds(2), Duration.ofSeconds(2)));
+                new AnalyzerProperties(Duration.ofSeconds(2), Duration.ofSeconds(2)),
+                address -> false);
 
-        assertThatThrownBy(() -> analyzer.analyze("http://does-not-resolve.example/"))
+        assertThatThrownBy(() -> analyzer.analyze("https://example.com/"))
                 .isInstanceOf(AnalysisException.class)
                 .extracting(e -> ((AnalysisException) e).reason())
                 .isEqualTo(AnalysisException.Reason.DNS_FAILURE);
@@ -362,17 +380,19 @@ class HttpAnalyzerTest {
     private HttpAnalyzer newAnalyzer(Duration requestTimeout) {
         HttpClient client = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(2))
-                .followRedirects(HttpClient.Redirect.NORMAL)
+                .followRedirects(HttpClient.Redirect.NEVER)
                 .build();
-        return new HttpAnalyzer(client, new AnalyzerProperties(Duration.ofSeconds(2), requestTimeout));
+        return new HttpAnalyzer(client, new AnalyzerProperties(Duration.ofSeconds(2), requestTimeout),
+                address -> false);
     }
 
     private HttpAnalyzer newAnalyzerWithMaxResponseSize(DataSize maxResponseSize) {
         HttpClient client = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(2))
-                .followRedirects(HttpClient.Redirect.NORMAL)
+                .followRedirects(HttpClient.Redirect.NEVER)
                 .build();
         return new HttpAnalyzer(client,
-                new AnalyzerProperties(Duration.ofSeconds(2), Duration.ofSeconds(2), maxResponseSize));
+                new AnalyzerProperties(Duration.ofSeconds(2), Duration.ofSeconds(2), maxResponseSize),
+                address -> false);
     }
 }

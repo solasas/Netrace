@@ -5,6 +5,7 @@ import com.netrace.backend.analyzer.DnsAnalyzer;
 import com.netrace.backend.analyzer.HttpAnalyzer;
 import com.netrace.backend.analyzer.TcpAnalyzer;
 import com.netrace.backend.analyzer.TlsAnalyzer;
+import com.netrace.backend.config.AnalyzerProperties;
 import com.netrace.backend.dto.AnalyzeRequest;
 import com.netrace.backend.dto.AnalyzeResponse;
 import com.netrace.backend.dto.DnsMetadata;
@@ -26,6 +27,7 @@ import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.time.Duration;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -68,7 +70,13 @@ class AnalysisServiceTest {
     }
 
     private AnalysisService service() {
-        return new AnalysisService(urlValidator, dnsAnalyzer, tcpAnalyzer, tlsAnalyzer, httpAnalyzer);
+        return service(false);
+    }
+
+    private AnalysisService service(boolean allowPrivateTargets) {
+        AnalyzerProperties properties = new AnalyzerProperties(
+                Duration.ofSeconds(2), Duration.ofSeconds(2), null, 5, allowPrivateTargets);
+        return new AnalysisService(urlValidator, dnsAnalyzer, tcpAnalyzer, tlsAnalyzer, httpAnalyzer, properties);
     }
 
     @Test
@@ -165,6 +173,36 @@ class AnalysisServiceTest {
         verifyNoInteractions(tcpAnalyzer);
         verifyNoInteractions(tlsAnalyzer);
         verifyNoInteractions(httpAnalyzer);
+    }
+
+    @Test
+    void blocksATargetThatResolvesToAPrivateAddressWithoutCallingTcpTlsOrHttp() {
+        String url = "https://internal.example.com";
+        when(urlValidator.isValid(url)).thenReturn(true);
+        when(dnsAnalyzer.analyze(url)).thenReturn(dnsSuccess("internal.example.com", "10.0.0.5"));
+
+        assertThatThrownBy(() -> service().analyze(new AnalyzeRequest(url)))
+                .isInstanceOf(AnalysisException.class)
+                .extracting(e -> ((AnalysisException) e).reason())
+                .isEqualTo(AnalysisException.Reason.BLOCKED_TARGET);
+
+        verifyNoInteractions(tcpAnalyzer);
+        verifyNoInteractions(tlsAnalyzer);
+        verifyNoInteractions(httpAnalyzer);
+    }
+
+    @Test
+    void allowPrivateTargetsBypassesTheBlockForAPrivateAddress() {
+        String url = "http://internal.example.com/";
+        when(urlValidator.isValid(url)).thenReturn(true);
+        when(dnsAnalyzer.analyze(url)).thenReturn(dnsSuccess("internal.example.com", "10.0.0.5"));
+        when(tcpAnalyzer.analyze("10.0.0.5", 80)).thenReturn(tcpSuccess("10.0.0.5", 80));
+        when(httpAnalyzer.analyze(url))
+                .thenReturn(new HttpResult(url, 200, 42L, 30L, 12L, false, "HTTP/1.1", 10L, "text/plain"));
+
+        AnalyzeResponse actual = service(true).analyze(new AnalyzeRequest(url));
+
+        assertThat(actual.probes().dns().resolvedIps()).containsExactly("10.0.0.5");
     }
 
     @ParameterizedTest

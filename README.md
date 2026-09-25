@@ -57,6 +57,8 @@ The analyzer's outbound HTTP timeouts are configurable via `backend/src/main/res
 |---|---|---|
 | `netrace.analyzer.connect-timeout` | `5s` | Max time to establish a TCP connection to the target URL. Exceeding it surfaces as a `TIMEOUT` error. |
 | `netrace.analyzer.request-timeout` | `10s` | Max time for the full request/response exchange once connected, including downloading the response body. Exceeding it also surfaces as a `TIMEOUT` error. |
+| `netrace.analyzer.max-redirects` | `5` | Max number of redirects followed for one analysis. Each hop is individually validated against the SSRF guard (see [docs/security.md](docs/security.md)) before it's followed. Exceeding it surfaces as an `INVALID_RESPONSE` error. |
+| `netrace.analyzer.allow-private-targets` | `false` | When true, disables the SSRF guard entirely, allowing analysis of loopback/private/link-local targets. Off by default; only appropriate for a controlled internal/testing deployment - see [docs/security.md](docs/security.md) for the risk. |
 
 Values accept Spring Boot's duration shorthand (e.g. `5s`, `500ms`, `2m`). Example override:
 

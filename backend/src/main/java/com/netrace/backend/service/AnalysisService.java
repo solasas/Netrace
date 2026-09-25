@@ -5,6 +5,7 @@ import com.netrace.backend.analyzer.DnsAnalyzer;
 import com.netrace.backend.analyzer.HttpAnalyzer;
 import com.netrace.backend.analyzer.TcpAnalyzer;
 import com.netrace.backend.analyzer.TlsAnalyzer;
+import com.netrace.backend.config.AnalyzerProperties;
 import com.netrace.backend.dto.AnalyzeRequest;
 import com.netrace.backend.dto.AnalyzeResponse;
 import com.netrace.backend.dto.DnsMetadata;
@@ -18,10 +19,13 @@ import com.netrace.backend.dto.TcpResult;
 import com.netrace.backend.dto.TlsFailureReason;
 import com.netrace.backend.dto.TlsMetadata;
 import com.netrace.backend.dto.TlsResult;
+import com.netrace.backend.security.SsrfGuard;
 import com.netrace.backend.validation.UrlValidator;
 import org.springframework.stereotype.Service;
 
+import java.net.InetAddress;
 import java.net.URI;
+import java.net.UnknownHostException;
 
 /**
  * Coordinates a single analysis end to end as a fixed sequence of
@@ -43,6 +47,17 @@ import java.net.URI;
  * destination port is a request problem, not a target one, so it is
  * translated into InvalidUrlException (400) instead.
  * <p>
+ * Every address DnsAnalyzer resolves is checked against SsrfGuard
+ * before TCP/TLS ever run - this project fetches arbitrary
+ * user-supplied URLs, so a hostname resolving to a private, loopback,
+ * or link-local address (including cloud metadata endpoints) is
+ * refused with AnalysisException.Reason.BLOCKED_TARGET rather than
+ * connected to. HttpAnalyzer independently re-validates the same way
+ * before its own request and before following each redirect, since it
+ * performs its own separate resolution rather than reusing this one.
+ * See docs/security.md for the full threat model and disclosed
+ * limitations.
+ * <p>
  * PhaseResult from DnsAnalyzer/TcpAnalyzer/TlsAnalyzer is unwrapped
  * back into the existing flat DnsResult/TcpResult/TlsResult shapes and
  * grouped under Probes, kept structurally separate from the real HTTP
@@ -61,18 +76,21 @@ public class AnalysisService {
     private final TcpAnalyzer tcpAnalyzer;
     private final TlsAnalyzer tlsAnalyzer;
     private final HttpAnalyzer httpAnalyzer;
+    private final boolean allowPrivateTargets;
 
     public AnalysisService(
             UrlValidator urlValidator,
             DnsAnalyzer dnsAnalyzer,
             TcpAnalyzer tcpAnalyzer,
             TlsAnalyzer tlsAnalyzer,
-            HttpAnalyzer httpAnalyzer) {
+            HttpAnalyzer httpAnalyzer,
+            AnalyzerProperties analyzerProperties) {
         this.urlValidator = urlValidator;
         this.dnsAnalyzer = dnsAnalyzer;
         this.tcpAnalyzer = tcpAnalyzer;
         this.tlsAnalyzer = tlsAnalyzer;
         this.httpAnalyzer = httpAnalyzer;
+        this.allowPrivateTargets = analyzerProperties.allowPrivateTargets();
     }
 
     public AnalyzeResponse analyze(AnalyzeRequest request) {
@@ -102,8 +120,27 @@ public class AnalysisService {
 
     private DnsResult runDns(String url) {
         PhaseResult<DnsMetadata> dnsPhase = dnsAnalyzer.analyze(url);
-        return new DnsResult(
-                dnsPhase.metadata().hostname(), dnsPhase.metadata().resolvedIps(), dnsPhase.durationMs());
+        DnsMetadata metadata = dnsPhase.metadata();
+        for (String ip : metadata.resolvedIps()) {
+            if (!allowPrivateTargets && SsrfGuard.isBlocked(parseLiteralIp(ip))) {
+                throw new AnalysisException(AnalysisException.Reason.BLOCKED_TARGET,
+                        "Refusing to analyze " + metadata.hostname()
+                                + ": resolves to a private or reserved address (" + ip + ")", null);
+            }
+        }
+        return new DnsResult(metadata.hostname(), metadata.resolvedIps(), dnsPhase.durationMs());
+    }
+
+    // resolvedIps entries are always the literal getHostAddress() form
+    // of an address DnsAnalyzer already resolved, so re-parsing them
+    // here is a local, non-blocking string parse - never a second DNS
+    // lookup.
+    private static InetAddress parseLiteralIp(String ip) {
+        try {
+            return InetAddress.getByName(ip);
+        } catch (UnknownHostException e) {
+            throw new IllegalStateException("Not a literal IP address: " + ip, e);
+        }
     }
 
     private TcpResult runTcp(String url, String resolvedIp, int port) {

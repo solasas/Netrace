@@ -24,7 +24,7 @@ Browsers do not expose DNS resolution time, raw TCP connect time, or TLS handsha
 
 ## Security
 
-Because the backend accepts an arbitrary user-supplied URL and fetches it, it is treated as a Server-Side Request Forgery (SSRF) surface: the backend is a trusted service capable of reaching internal/private network addresses that end users normally cannot reach directly. Before the backend makes real outbound requests, this needs to account for restricting or flagging requests to private, loopback, and link-local address ranges. This is called out here rather than deferred silently, per the project's engineering principles.
+Because the backend accepts an arbitrary user-supplied URL and fetches it, it is treated as a Server-Side Request Forgery (SSRF) surface: the backend is a trusted service capable of reaching internal/private network addresses that end users normally cannot reach directly. Outbound requests are validated against loopback, private, link-local (including cloud metadata endpoints), and other reserved address ranges before connecting - including on every redirect hop, not just the initial URL. See [docs/security.md](security.md) for the full threat model, what's protected, and this project's disclosed remaining limitations (notably DNS rebinding).
 
 ## Non-goals (Stage 1)
 

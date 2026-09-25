@@ -14,21 +14,34 @@ import org.springframework.http.ResponseEntity;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.net.ServerSocket;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Isolated in its own Spring context (separate from
- * AnalyzeEndpointIntegrationTest) because it overrides
- * netrace.analyzer.request-timeout to a value short enough to trigger
- * reliably against a local, deliberately slow server, without affecting
- * the real-network HTTPS success case in the other test class.
+ * AnalyzeEndpointIntegrationTest) because it overrides two properties:
+ * netrace.analyzer.request-timeout, short enough to trigger reliably
+ * against a local, deliberately slow server; and
+ * netrace.analyzer.allow-private-targets=true, without which the real
+ * SsrfGuard-backed target guard would refuse every test here before it
+ * could reach the scenario each one is actually about (a slow server, a
+ * closed port) - both of which require a real, controllable local
+ * server (on a loopback address) to reproduce deterministically without
+ * depending on real external network conditions. Deliberately
+ * bypassing the guard is the point of this class; it is not how the
+ * production default behaves, and docs/security.md documents why the
+ * property exists and its risk if ever set outside a controlled
+ * testing context like this one.
  */
 @SpringBootTest(
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
-        properties = "netrace.analyzer.request-timeout=200ms")
+        properties = {
+                "netrace.analyzer.request-timeout=200ms",
+                "netrace.analyzer.allow-private-targets=true"
+        })
 @AutoConfigureTestRestTemplate
-class AnalyzeEndpointTimeoutIntegrationTest {
+class AnalyzeEndpointLocalTargetIntegrationTest {
 
     @Autowired
     private TestRestTemplate restTemplate;
@@ -66,5 +79,20 @@ class AnalyzeEndpointTimeoutIntegrationTest {
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.GATEWAY_TIMEOUT);
         assertThat(response.getBody()).isNotNull();
         assertThat(response.getBody().error()).isEqualTo("TIMEOUT");
+    }
+
+    @Test
+    void reportsAConnectionFailureForAnUnreachableHost() throws IOException {
+        int freePort;
+        try (ServerSocket probe = new ServerSocket(0)) {
+            freePort = probe.getLocalPort();
+        }
+
+        ResponseEntity<ErrorResponse> response = restTemplate.postForEntity(
+                "/api/analyze", new AnalyzeRequest("http://localhost:" + freePort + "/"), ErrorResponse.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_GATEWAY);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().error()).isEqualTo("CONNECTION_FAILURE");
     }
 }

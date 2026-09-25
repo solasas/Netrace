@@ -48,6 +48,7 @@ public class GlobalExceptionHandler {
         HttpStatus status = switch (e.reason()) {
             case TIMEOUT -> HttpStatus.GATEWAY_TIMEOUT;
             case DNS_FAILURE, CONNECTION_FAILURE, INVALID_RESPONSE -> HttpStatus.BAD_GATEWAY;
+            case BLOCKED_TARGET -> HttpStatus.BAD_REQUEST;
         };
         // The cause (with its raw, possibly OS-specific message) is logged
         // here for operators; only our own crafted e.getMessage() ever
