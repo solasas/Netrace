@@ -6,10 +6,16 @@ import com.netrace.backend.dto.TlsFailureReason;
 import com.netrace.backend.dto.TlsMetadata;
 import org.junit.jupiter.api.Test;
 
+import javax.net.ssl.KeyManagerFactory;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLServerSocket;
+import javax.net.ssl.SSLSocket;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.SocketTimeoutException;
+import java.security.KeyStore;
 import java.time.Duration;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -123,5 +129,70 @@ class TlsAnalyzerTest {
         assertThatThrownBy(() ->
                 new TlsAnalyzer(new AnalyzerProperties(Duration.ofSeconds(-1), Duration.ofSeconds(2))))
                 .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void allowedProtocolsExcludeLegacyTlsVersions() {
+        // Security regression: the negotiable protocol set must be
+        // explicitly pinned to 1.2/1.3, never left to fall back to
+        // whatever the ambient JVM's defaults happen to allow.
+        assertThat(TlsAnalyzer.ALLOWED_PROTOCOLS).containsExactly("TLSv1.3", "TLSv1.2");
+        assertThat(TlsAnalyzer.ALLOWED_PROTOCOLS)
+                .doesNotContain("TLSv1", "TLSv1.1", "SSLv3", "SSLv2Hello");
+    }
+
+    @Test
+    void reportsAHandshakeFailureForAnUntrustedSelfSignedCertificate() throws Exception {
+        // Real, not mocked: proves certificate trust-chain validation is
+        // never bypassed - a distinct check from hostname verification
+        // (above), since a cert can match the hostname and still be
+        // untrusted. This is genuine JDK default trust store behavior:
+        // TlsAnalyzer never installs a custom TrustManager.
+        KeyStore keyStore = KeyStore.getInstance("PKCS12");
+        try (InputStream in = getClass().getResourceAsStream("/self-signed-test.p12")) {
+            keyStore.load(in, "changeit".toCharArray());
+        }
+        KeyManagerFactory keyManagerFactory = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+        keyManagerFactory.init(keyStore, "changeit".toCharArray());
+        SSLContext serverContext = SSLContext.getInstance("TLS");
+        serverContext.init(keyManagerFactory.getKeyManagers(), null, null);
+
+        try (SSLServerSocket serverSocket =
+                (SSLServerSocket) serverContext.getServerSocketFactory().createServerSocket(0)) {
+            int port = serverSocket.getLocalPort();
+            Thread serverThread = new Thread(() -> {
+                try (SSLSocket accepted = (SSLSocket) serverSocket.accept()) {
+                    accepted.startHandshake();
+                } catch (IOException ignored) {
+                    // Expected: the client (this test's TlsAnalyzer) does
+                    // not trust our self-signed cert and aborts first.
+                }
+            });
+            serverThread.start();
+
+            PhaseResult<TlsMetadata> result = analyzer.analyze("localhost", "127.0.0.1", port);
+
+            assertThat(result.status()).isEqualTo(PhaseResult.Status.FAILURE);
+            assertThat(result.metadata().failureReason()).isEqualTo(TlsFailureReason.HANDSHAKE_FAILURE);
+
+            serverThread.join(2000);
+        }
+    }
+
+    @Test
+    void doesNotLeakSocketsAcrossManyFailedConnectionAttempts() throws IOException {
+        // If sockets weren't being closed on the failure path, file
+        // descriptors would exhaust partway through this loop.
+        int freePort;
+        try (ServerSocket probe = new ServerSocket(0)) {
+            freePort = probe.getLocalPort();
+        }
+
+        for (int i = 0; i < 300; i++) {
+            PhaseResult<TlsMetadata> result = analyzer.analyze("localhost", "127.0.0.1", freePort);
+            assertThat(result.status())
+                    .as("iteration %d should still fail cleanly if sockets are being closed, not leaked", i)
+                    .isEqualTo(PhaseResult.Status.FAILURE);
+        }
     }
 }

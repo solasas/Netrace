@@ -67,11 +67,30 @@ import java.util.List;
  * out handshake, or a rejected certificate are themselves meaningful,
  * directly measured outcomes, not conditions that prevent any
  * measurement from being taken.
+ * <p>
+ * Security: certificate trust validation and hostname verification are
+ * never disabled - this class never installs a custom TrustManager and
+ * always leaves SSLContext.init's trust managers as the JDK default
+ * (the platform's real CA trust store), and endpoint identification is
+ * explicitly enabled. ALLOWED_PROTOCOLS explicitly pins the negotiable
+ * TLS versions to 1.3/1.2 rather than relying on whatever the ambient
+ * JVM's default enabled-protocols happen to be - a server that only
+ * offers something older correctly fails the handshake here.
  */
 @Component
 public class TlsAnalyzer {
 
     public static final String PHASE = "TLS";
+
+    /**
+     * The only TLS versions this analyzer will negotiate. Explicit on
+     * purpose: relying on the JVM's ambient default enabled-protocols
+     * (governed by the jdk.tls.disabledAlgorithms security property)
+     * would make the actual security floor invisible from this code
+     * and dependent on JVM/vendor/deployment configuration outside
+     * this class's control.
+     */
+    static final List<String> ALLOWED_PROTOCOLS = List.of("TLSv1.3", "TLSv1.2");
 
     @FunctionalInterface
     interface Handshaker {
@@ -133,6 +152,7 @@ public class TlsAnalyzer {
                 List<SNIServerName> serverNames = List.of(new SNIHostName(hostname));
                 sslParameters.setServerNames(serverNames);
                 sslParameters.setEndpointIdentificationAlgorithm("HTTPS");
+                sslParameters.setProtocols(ALLOWED_PROTOCOLS.toArray(new String[0]));
                 sslSocket.setSSLParameters(sslParameters);
 
                 sslSocket.startHandshake();
