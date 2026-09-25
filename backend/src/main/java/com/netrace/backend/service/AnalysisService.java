@@ -24,14 +24,14 @@ import org.springframework.stereotype.Service;
 import java.net.URI;
 
 /**
- * Coordinates a single analysis end to end. For an HTTPS URL:
- * validate, resolve (DnsAnalyzer), open a fresh TCP connection to the
- * resolved destination (TcpAnalyzer), perform a fresh TLS handshake
- * over that same destination (TlsAnalyzer), then run the real HTTP
- * request (HttpAnalyzer). For an HTTP URL, the TLS phase is skipped
- * entirely - it is not applicable, so Probes.tls is null rather than
- * some placeholder/empty result. Keeps this orchestration out of the
- * controller.
+ * Coordinates a single analysis end to end as a fixed sequence of
+ * phases, each its own private method with one responsibility - call
+ * its analyzer, translate a failure into the right exception, and
+ * unwrap the successful result into its DTO:
+ * validate -&gt; DNS -&gt; TCP -&gt; TLS (HTTPS only) -&gt; HTTP -&gt; aggregate.
+ * For an HTTP URL, the TLS phase is skipped entirely - it is not
+ * applicable, so Probes.tls is null rather than some placeholder/empty
+ * result. Keeps this orchestration out of the controller.
  * <p>
  * A DNS, TCP, or TLS failure short-circuits before the next phase
  * runs - if the resolved address refuses connections or rejects the
@@ -77,13 +77,9 @@ public class AnalysisService {
 
     public AnalyzeResponse analyze(AnalyzeRequest request) {
         String url = request.url();
-        if (!urlValidator.isValid(url)) {
-            throw new InvalidUrlException(url);
-        }
+        validateUrl(url);
 
-        PhaseResult<DnsMetadata> dnsPhase = dnsAnalyzer.analyze(url);
-        DnsResult dns = new DnsResult(
-                dnsPhase.metadata().hostname(), dnsPhase.metadata().resolvedIps(), dnsPhase.durationMs());
+        DnsResult dns = runDns(url);
 
         // Connect to a specific resolved address, the same one a client
         // would actually reach - not the hostname again, which would let
@@ -91,6 +87,26 @@ public class AnalysisService {
         String resolvedIp = dns.resolvedIps().get(0);
         int port = portOf(url);
 
+        TcpResult tcp = runTcp(url, resolvedIp, port);
+        TlsResult tls = isHttps(url) ? runTls(dns.hostname(), resolvedIp, port) : null;
+        HttpResult http = runHttp(url);
+
+        return aggregate(http, new Probes(dns, tcp, tls));
+    }
+
+    private void validateUrl(String url) {
+        if (!urlValidator.isValid(url)) {
+            throw new InvalidUrlException(url);
+        }
+    }
+
+    private DnsResult runDns(String url) {
+        PhaseResult<DnsMetadata> dnsPhase = dnsAnalyzer.analyze(url);
+        return new DnsResult(
+                dnsPhase.metadata().hostname(), dnsPhase.metadata().resolvedIps(), dnsPhase.durationMs());
+    }
+
+    private TcpResult runTcp(String url, String resolvedIp, int port) {
         PhaseResult<TcpMetadata> tcpPhase;
         try {
             tcpPhase = tcpAnalyzer.analyze(resolvedIp, port);
@@ -100,25 +116,27 @@ public class AnalysisService {
         if (tcpPhase.status() == PhaseResult.Status.FAILURE) {
             throw tcpFailure(resolvedIp, port, tcpPhase.metadata().failureReason());
         }
-        TcpResult tcp = new TcpResult(resolvedIp, port, tcpPhase.durationMs());
+        return new TcpResult(resolvedIp, port, tcpPhase.durationMs());
+    }
 
-        TlsResult tls = null;
-        if (isHttps(url)) {
-            PhaseResult<TlsMetadata> tlsPhase = tlsAnalyzer.analyze(dns.hostname(), resolvedIp, port);
-            if (tlsPhase.status() == PhaseResult.Status.FAILURE) {
-                throw tlsFailure(dns.hostname(), resolvedIp, port, tlsPhase.metadata().failureReason());
-            }
-            tls = new TlsResult(
-                    tlsPhase.metadata().tlsVersion(),
-                    tlsPhase.metadata().cipherSuite(),
-                    tlsPhase.metadata().certificateSubject(),
-                    tlsPhase.metadata().certificateIssuer(),
-                    tlsPhase.durationMs());
+    private TlsResult runTls(String hostname, String resolvedIp, int port) {
+        PhaseResult<TlsMetadata> tlsPhase = tlsAnalyzer.analyze(hostname, resolvedIp, port);
+        if (tlsPhase.status() == PhaseResult.Status.FAILURE) {
+            throw tlsFailure(hostname, resolvedIp, port, tlsPhase.metadata().failureReason());
         }
+        return new TlsResult(
+                tlsPhase.metadata().tlsVersion(),
+                tlsPhase.metadata().cipherSuite(),
+                tlsPhase.metadata().certificateSubject(),
+                tlsPhase.metadata().certificateIssuer(),
+                tlsPhase.durationMs());
+    }
 
-        HttpResult http = httpAnalyzer.analyze(url);
+    private HttpResult runHttp(String url) {
+        return httpAnalyzer.analyze(url);
+    }
 
-        Probes probes = new Probes(dns, tcp, tls);
+    private static AnalyzeResponse aggregate(HttpResult http, Probes probes) {
         return new AnalyzeResponse(
                 http.url(),
                 http.statusCode(),
