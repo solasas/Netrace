@@ -16,7 +16,7 @@ class AnalyzeResponseTest {
         DnsResult dns = new DnsResult("example.com", List.of("93.184.216.34"), 12L);
         TcpResult tcp = new TcpResult("93.184.216.34", 443, 8L);
         TlsResult tls = new TlsResult("TLSv1.3", "TLS_AES_128_GCM_SHA256", "CN=example.com", "CN=Test CA", 20L);
-        AnalyzeResponse response = new AnalyzeResponse("https://example.com", dns, tcp, tls, 200, 123L);
+        AnalyzeResponse response = new AnalyzeResponse("https://example.com", dns, tcp, tls, 200, "HTTP/2", 123L);
 
         String json = objectMapper.writeValueAsString(response);
 
@@ -42,6 +42,7 @@ class AnalyzeResponseTest {
                             "durationMs": 20
                           },
                           "statusCode": 200,
+                          "protocol": "HTTP/2",
                           "totalTimeMs": 123
                         }
                         """));
@@ -51,11 +52,12 @@ class AnalyzeResponseTest {
     void serializesTlsAsNullForAnHttpResponse() throws Exception {
         DnsResult dns = new DnsResult("example.com", List.of("93.184.216.34"), 12L);
         TcpResult tcp = new TcpResult("93.184.216.34", 80, 8L);
-        AnalyzeResponse response = new AnalyzeResponse("http://example.com", dns, tcp, null, 200, 123L);
+        AnalyzeResponse response = new AnalyzeResponse("http://example.com", dns, tcp, null, 200, "HTTP/1.1", 123L);
 
         String json = objectMapper.writeValueAsString(response);
 
         assertThat(objectMapper.readTree(json).get("tls").isNull()).isTrue();
+        assertThat(objectMapper.readTree(json).get("protocol").asString()).isEqualTo("HTTP/1.1");
     }
 
     @Test
@@ -81,6 +83,7 @@ class AnalyzeResponseTest {
                     "durationMs": 20
                   },
                   "statusCode": 404,
+                  "protocol": "HTTP/2",
                   "totalTimeMs": 987
                 }
                 """;
@@ -90,6 +93,6 @@ class AnalyzeResponseTest {
         DnsResult dns = new DnsResult("example.com", List.of("93.184.216.34"), 12L);
         TcpResult tcp = new TcpResult("93.184.216.34", 443, 8L);
         TlsResult tls = new TlsResult("TLSv1.3", "TLS_AES_128_GCM_SHA256", "CN=example.com", "CN=Test CA", 20L);
-        assertThat(response).isEqualTo(new AnalyzeResponse("https://example.com", dns, tcp, tls, 404, 987L));
+        assertThat(response).isEqualTo(new AnalyzeResponse("https://example.com", dns, tcp, tls, 404, "HTTP/2", 987L));
     }
 }

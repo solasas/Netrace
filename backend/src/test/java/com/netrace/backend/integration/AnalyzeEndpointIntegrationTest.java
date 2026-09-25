@@ -67,6 +67,7 @@ class AnalyzeEndpointIntegrationTest {
         assertThat(response.getBody().tls().certificateSubject()).isNotBlank();
         assertThat(response.getBody().tls().certificateIssuer()).isNotBlank();
         assertThat(response.getBody().tls().durationMs()).isGreaterThanOrEqualTo(0);
+        assertThat(response.getBody().protocol()).isIn("HTTP/1.1", "HTTP/2");
     }
 
     @Test
@@ -93,6 +94,7 @@ class AnalyzeEndpointIntegrationTest {
         assertThat(response.getBody().tcp().port()).isEqualTo(localServer.getAddress().getPort());
         assertThat(response.getBody().tcp().durationMs()).isGreaterThanOrEqualTo(0);
         assertThat(response.getBody().tls()).isNull();
+        assertThat(response.getBody().protocol()).isEqualTo("HTTP/1.1");
     }
 
     @Test

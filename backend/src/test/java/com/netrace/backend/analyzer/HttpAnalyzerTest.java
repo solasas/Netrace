@@ -53,6 +53,30 @@ class HttpAnalyzerTest {
         assertThat(response.totalTimeMs()).isGreaterThanOrEqualTo(0);
         assertThat(response.ttfbMs()).isGreaterThanOrEqualTo(0);
         assertThat(response.ttfbMs()).isLessThanOrEqualTo(response.totalTimeMs());
+        assertThat(response.protocol()).isEqualTo("HTTP/1.1");
+    }
+
+    @Test
+    void detectsHttp2ForARealServerThatNegotiatesIt() throws IOException {
+        // Real, not mocked: com.sun.net.httpserver.HttpServer (used
+        // everywhere else in this class) only ever speaks HTTP/1.1, so a
+        // real HTTP/2 negotiation needs a real HTTP/2 server. example.com
+        // is Cloudflare-fronted and supports HTTP/2, and is the same
+        // stable, IANA-reserved target already used elsewhere in this
+        // suite for real-network tests.
+        HttpResult response = newAnalyzer().analyze("https://example.com");
+
+        assertThat(response.protocol()).isEqualTo("HTTP/2");
+    }
+
+    @Test
+    void javaHttpClientHasNoHttp3SupportToDetect() {
+        // Locks in the actual current JDK reality as a verifiable test,
+        // not just a claim in prose: if a future JDK ever adds HTTP/3 to
+        // this enum, this test breaks, forcing a deliberate decision
+        // about how to represent it rather than silently misreporting.
+        assertThat(HttpClient.Version.values())
+                .containsExactly(HttpClient.Version.HTTP_1_1, HttpClient.Version.HTTP_2);
     }
 
     @Test

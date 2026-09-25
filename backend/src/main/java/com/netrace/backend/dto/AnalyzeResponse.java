@@ -7,6 +7,7 @@ public record AnalyzeResponse(
         TcpResult tcp,
         TlsResult tls,
         int statusCode,
+        String protocol,
         long totalTimeMs
 
 ) {

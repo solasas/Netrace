@@ -55,6 +55,18 @@ import java.util.concurrent.atomic.AtomicLong;
  * never-ending response. HttpResult.bodyTruncated reports when this
  * happened; downloadMs in that case is time spent up to the cutoff,
  * not what a full download would have taken.
+ * <p>
+ * protocol reports response.version() - the HTTP version actually
+ * negotiated for this specific response, not merely requested.
+ * HttpClientConfig doesn't pin a version, so HttpClient's own default
+ * preference applies: it prefers HTTP/2 and transparently falls back
+ * to HTTP/1.1 per connection depending on what the server supports.
+ * java.net.http.HttpClient.Version has exactly two values,
+ * HTTP_1_1 and HTTP_2 - there is no HTTP/3 support in this API at
+ * all, so none is claimed here; the mapping below is an exhaustive
+ * switch with no default case specifically so that if a future JDK
+ * ever adds a third value, this stops compiling instead of silently
+ * mis-reporting it.
  */
 @Component
 public class HttpAnalyzer {
@@ -110,9 +122,17 @@ public class HttpAnalyzer {
         long ttfbMs = (bodyHandler.firstByteNanos() - startNanos) / 1_000_000;
         long downloadMs = elapsedMs - ttfbMs;
         boolean bodyTruncated = Boolean.TRUE.equals(response.body());
+        String protocol = protocolName(response.version());
 
-        return new HttpResult(
-                response.uri().toString(), response.statusCode(), elapsedMs, ttfbMs, downloadMs, bodyTruncated);
+        return new HttpResult(response.uri().toString(), response.statusCode(), elapsedMs, ttfbMs, downloadMs,
+                bodyTruncated, protocol);
+    }
+
+    private static String protocolName(HttpClient.Version version) {
+        return switch (version) {
+            case HTTP_1_1 -> "HTTP/1.1";
+            case HTTP_2 -> "HTTP/2";
+        };
     }
 
     /**
