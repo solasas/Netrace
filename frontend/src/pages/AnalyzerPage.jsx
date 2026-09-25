@@ -3,6 +3,7 @@ import AnalysisSummary from '../components/AnalysisSummary'
 import Button from '../components/Button'
 import DnsDetails from '../components/DnsDetails'
 import ErrorMessage from '../components/ErrorMessage'
+import HttpDetails from '../components/HttpDetails'
 import TcpDetails from '../components/TcpDetails'
 import TextInput from '../components/TextInput'
 import TlsDetails from '../components/TlsDetails'
@@ -81,6 +82,14 @@ function AnalyzerPage() {
             />
           )}
           <TlsDetails tls={result.probes?.tls} />
+          <HttpDetails
+            statusCode={result.statusCode}
+            protocol={result.protocol}
+            ttfbMs={result.ttfbMs}
+            downloadMs={result.downloadMs}
+            contentType={result.contentType}
+            contentLength={result.contentLength}
+          />
         </>
       )}
     </main>
