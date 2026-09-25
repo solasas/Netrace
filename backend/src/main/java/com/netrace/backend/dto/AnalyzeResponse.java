@@ -4,6 +4,7 @@ public record AnalyzeResponse(
 
         String url,
         DnsResult dns,
+        TcpResult tcp,
         int statusCode,
         long totalTimeMs
 

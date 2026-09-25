@@ -2,12 +2,17 @@ package com.netrace.backend.analyzer;
 
 import com.netrace.backend.config.AnalyzerProperties;
 import com.netrace.backend.dto.PhaseResult;
+import com.netrace.backend.dto.TcpFailureReason;
 import com.netrace.backend.dto.TcpMetadata;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
+import java.net.ConnectException;
 import java.net.InetSocketAddress;
+import java.net.NoRouteToHostException;
 import java.net.Socket;
+import java.net.SocketTimeoutException;
 
 /**
  * Opens a dedicated, fresh TCP connection (never reused or pooled) to
@@ -24,35 +29,69 @@ import java.net.Socket;
  * retry, or the destination host's listen backlog - only the
  * caller-visible duration.
  * <p>
- * Unlike DnsAnalyzer/HttpAnalyzer, a connection failure here is
- * reported as a normal PhaseResult with Status.FAILURE (still carrying
- * a real elapsed duration) rather than thrown as an AnalysisException:
- * a refused or timed-out connection is itself a meaningful, directly
- * measured outcome of this phase, not a condition that prevents any
- * measurement from being taken.
+ * A connection failure is reported as a normal PhaseResult with
+ * Status.FAILURE (still carrying a real elapsed duration) and a
+ * TcpFailureReason distinguishing connection refused, timeout, an
+ * unreachable host, or anything else - rather than thrown as an
+ * AnalysisException, since a refused or timed-out connection is itself
+ * a meaningful, directly measured outcome of this phase.
+ * <p>
+ * An out-of-range destination port is different: no connection is ever
+ * attempted, so there is no meaningful duration to report. That case
+ * throws IllegalArgumentException immediately instead.
  */
 @Component
 public class TcpAnalyzer {
 
     public static final String PHASE = "TCP";
 
-    private final AnalyzerProperties analyzerProperties;
+    @FunctionalInterface
+    interface Connector {
+        void connect(String host, int port, int timeoutMs) throws IOException;
+    }
 
+    private final AnalyzerProperties analyzerProperties;
+    private final Connector connector;
+
+    @Autowired
     public TcpAnalyzer(AnalyzerProperties analyzerProperties) {
+        this(analyzerProperties, TcpAnalyzer::connectWithRealSocket);
+    }
+
+    TcpAnalyzer(AnalyzerProperties analyzerProperties, Connector connector) {
         this.analyzerProperties = analyzerProperties;
+        this.connector = connector;
+    }
+
+    private static void connectWithRealSocket(String host, int port, int timeoutMs) throws IOException {
+        try (Socket socket = new Socket()) {
+            socket.connect(new InetSocketAddress(host, port), timeoutMs);
+        }
     }
 
     public PhaseResult<TcpMetadata> analyze(String host, int port) {
+        if (port < 0 || port > 65535) {
+            throw new IllegalArgumentException("Invalid destination port: " + port);
+        }
         int timeoutMs = (int) analyzerProperties.connectTimeout().toMillis();
-        TcpMetadata metadata = new TcpMetadata(host, port);
 
         long startNanos = System.nanoTime();
-        try (Socket socket = new Socket()) {
-            socket.connect(new InetSocketAddress(host, port), timeoutMs);
-            return PhaseResult.success(PHASE, elapsedMs(startNanos), metadata);
+        try {
+            connector.connect(host, port, timeoutMs);
+            return PhaseResult.success(PHASE, elapsedMs(startNanos), new TcpMetadata(host, port));
+        } catch (SocketTimeoutException e) {
+            return failure(host, port, startNanos, TcpFailureReason.TIMEOUT);
+        } catch (ConnectException e) {
+            return failure(host, port, startNanos, TcpFailureReason.CONNECTION_REFUSED);
+        } catch (NoRouteToHostException e) {
+            return failure(host, port, startNanos, TcpFailureReason.UNREACHABLE);
         } catch (IOException e) {
-            return PhaseResult.failure(PHASE, elapsedMs(startNanos), metadata);
+            return failure(host, port, startNanos, TcpFailureReason.UNKNOWN);
         }
+    }
+
+    private PhaseResult<TcpMetadata> failure(String host, int port, long startNanos, TcpFailureReason reason) {
+        return PhaseResult.failure(PHASE, elapsedMs(startNanos), new TcpMetadata(host, port, reason));
     }
 
     private static long elapsedMs(long startNanos) {

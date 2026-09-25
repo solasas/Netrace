@@ -57,6 +57,10 @@ class AnalyzeEndpointIntegrationTest {
         assertThat(response.getBody().dns().hostname()).isEqualTo("example.com");
         assertThat(response.getBody().dns().resolvedIps()).isNotEmpty();
         assertThat(response.getBody().dns().durationMs()).isGreaterThanOrEqualTo(0);
+        assertThat(response.getBody().tcp()).isNotNull();
+        assertThat(response.getBody().tcp().host()).isEqualTo(response.getBody().dns().resolvedIps().get(0));
+        assertThat(response.getBody().tcp().port()).isEqualTo(443);
+        assertThat(response.getBody().tcp().durationMs()).isGreaterThanOrEqualTo(0);
     }
 
     @Test
@@ -79,6 +83,9 @@ class AnalyzeEndpointIntegrationTest {
         assertThat(response.getBody().dns()).isNotNull();
         assertThat(response.getBody().dns().hostname()).isEqualTo("localhost");
         assertThat(response.getBody().dns().resolvedIps()).isNotEmpty();
+        assertThat(response.getBody().tcp()).isNotNull();
+        assertThat(response.getBody().tcp().port()).isEqualTo(localServer.getAddress().getPort());
+        assertThat(response.getBody().tcp().durationMs()).isGreaterThanOrEqualTo(0);
     }
 
     @Test

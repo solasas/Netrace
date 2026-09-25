@@ -3,6 +3,7 @@ package com.netrace.backend.controller;
 import com.netrace.backend.analyzer.AnalysisException;
 import com.netrace.backend.dto.AnalyzeResponse;
 import com.netrace.backend.dto.DnsResult;
+import com.netrace.backend.dto.TcpResult;
 import com.netrace.backend.service.AnalysisService;
 import com.netrace.backend.service.InvalidUrlException;
 import org.junit.jupiter.api.Test;
@@ -32,8 +33,9 @@ class AnalyzeControllerTest {
     @Test
     void returnsOkWithTheAnalysisResultOnSuccess() throws Exception {
         DnsResult dns = new DnsResult("example.com", List.of("93.184.216.34"), 12L);
+        TcpResult tcp = new TcpResult("93.184.216.34", 443, 8L);
         when(analysisService.analyze(any())).thenReturn(
-                new AnalyzeResponse("https://example.com", dns, 200, 123L));
+                new AnalyzeResponse("https://example.com", dns, tcp, 200, 123L));
 
         mockMvc.perform(post("/api/analyze")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -43,6 +45,9 @@ class AnalyzeControllerTest {
                 .andExpect(jsonPath("$.dns.hostname").value("example.com"))
                 .andExpect(jsonPath("$.dns.resolvedIps[0]").value("93.184.216.34"))
                 .andExpect(jsonPath("$.dns.durationMs").value(12))
+                .andExpect(jsonPath("$.tcp.host").value("93.184.216.34"))
+                .andExpect(jsonPath("$.tcp.port").value(443))
+                .andExpect(jsonPath("$.tcp.durationMs").value(8))
                 .andExpect(jsonPath("$.statusCode").value(200))
                 .andExpect(jsonPath("$.totalTimeMs").value(123));
     }

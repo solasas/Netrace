@@ -14,7 +14,8 @@ class AnalyzeResponseTest {
     @Test
     void serializesToTheExpectedJsonFields() throws Exception {
         DnsResult dns = new DnsResult("example.com", List.of("93.184.216.34"), 12L);
-        AnalyzeResponse response = new AnalyzeResponse("https://example.com", dns, 200, 123L);
+        TcpResult tcp = new TcpResult("93.184.216.34", 443, 8L);
+        AnalyzeResponse response = new AnalyzeResponse("https://example.com", dns, tcp, 200, 123L);
 
         String json = objectMapper.writeValueAsString(response);
 
@@ -26,6 +27,11 @@ class AnalyzeResponseTest {
                             "hostname": "example.com",
                             "resolvedIps": ["93.184.216.34"],
                             "durationMs": 12
+                          },
+                          "tcp": {
+                            "host": "93.184.216.34",
+                            "port": 443,
+                            "durationMs": 8
                           },
                           "statusCode": 200,
                           "totalTimeMs": 123
@@ -43,6 +49,11 @@ class AnalyzeResponseTest {
                     "resolvedIps": ["93.184.216.34"],
                     "durationMs": 12
                   },
+                  "tcp": {
+                    "host": "93.184.216.34",
+                    "port": 443,
+                    "durationMs": 8
+                  },
                   "statusCode": 404,
                   "totalTimeMs": 987
                 }
@@ -51,6 +62,7 @@ class AnalyzeResponseTest {
         AnalyzeResponse response = objectMapper.readValue(json, AnalyzeResponse.class);
 
         DnsResult dns = new DnsResult("example.com", List.of("93.184.216.34"), 12L);
-        assertThat(response).isEqualTo(new AnalyzeResponse("https://example.com", dns, 404, 987L));
+        TcpResult tcp = new TcpResult("93.184.216.34", 443, 8L);
+        assertThat(response).isEqualTo(new AnalyzeResponse("https://example.com", dns, tcp, 404, 987L));
     }
 }

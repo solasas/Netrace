@@ -1,34 +1,58 @@
 package com.netrace.backend.service;
 
+import com.netrace.backend.analyzer.AnalysisException;
 import com.netrace.backend.analyzer.DnsAnalyzer;
 import com.netrace.backend.analyzer.HttpAnalyzer;
+import com.netrace.backend.analyzer.TcpAnalyzer;
 import com.netrace.backend.dto.AnalyzeRequest;
 import com.netrace.backend.dto.AnalyzeResponse;
 import com.netrace.backend.dto.DnsMetadata;
 import com.netrace.backend.dto.DnsResult;
 import com.netrace.backend.dto.HttpResult;
 import com.netrace.backend.dto.PhaseResult;
+import com.netrace.backend.dto.TcpFailureReason;
+import com.netrace.backend.dto.TcpMetadata;
+import com.netrace.backend.dto.TcpResult;
 import com.netrace.backend.validation.UrlValidator;
 import org.springframework.stereotype.Service;
 
+import java.net.URI;
+
 /**
- * Coordinates a single analysis: validate the requested URL, resolve
- * it via DnsAnalyzer, then run HttpAnalyzer against it, and combine
- * both into the response DTO. Keeps this orchestration out of the
- * controller. DNS failures short-circuit before the HTTP phase runs.
- * DnsAnalyzer's PhaseResult is unwrapped back into the existing
- * DnsResult shape here, so AnalyzeResponse's JSON contract is unchanged.
+ * Coordinates a single analysis end to end: validate the requested
+ * URL, resolve it (DnsAnalyzer), open a fresh TCP connection to the
+ * resolved destination (TcpAnalyzer), then run the real HTTP request
+ * (HttpAnalyzer), combining all three into the response DTO. Keeps
+ * this orchestration out of the controller.
+ * <p>
+ * A DNS or TCP failure short-circuits before the next phase runs - if
+ * we already know the resolved address refuses connections, there is
+ * no point letting HttpAnalyzer attempt (and redundantly fail at) its
+ * own connection to the same target. TCP failures are translated into
+ * a specific AnalysisException.Reason and message based on
+ * TcpFailureReason (refused/timeout/unreachable/unknown), rather than
+ * always reporting a generic connection failure. An out-of-range
+ * destination port is a request problem, not a target one, so it is
+ * translated into InvalidUrlException (400) instead.
+ * <p>
+ * PhaseResult from DnsAnalyzer/TcpAnalyzer is unwrapped back into the
+ * existing flat DnsResult/TcpResult shapes here, so AnalyzeResponse's
+ * JSON contract stays a simple, flat-per-phase object rather than
+ * exposing the generic phase/status wrapper to API consumers.
  */
 @Service
 public class AnalysisService {
 
     private final UrlValidator urlValidator;
     private final DnsAnalyzer dnsAnalyzer;
+    private final TcpAnalyzer tcpAnalyzer;
     private final HttpAnalyzer httpAnalyzer;
 
-    public AnalysisService(UrlValidator urlValidator, DnsAnalyzer dnsAnalyzer, HttpAnalyzer httpAnalyzer) {
+    public AnalysisService(
+            UrlValidator urlValidator, DnsAnalyzer dnsAnalyzer, TcpAnalyzer tcpAnalyzer, HttpAnalyzer httpAnalyzer) {
         this.urlValidator = urlValidator;
         this.dnsAnalyzer = dnsAnalyzer;
+        this.tcpAnalyzer = tcpAnalyzer;
         this.httpAnalyzer = httpAnalyzer;
     }
 
@@ -37,10 +61,52 @@ public class AnalysisService {
         if (!urlValidator.isValid(url)) {
             throw new InvalidUrlException(url);
         }
+
         PhaseResult<DnsMetadata> dnsPhase = dnsAnalyzer.analyze(url);
-        HttpResult http = httpAnalyzer.analyze(url);
         DnsResult dns = new DnsResult(
                 dnsPhase.metadata().hostname(), dnsPhase.metadata().resolvedIps(), dnsPhase.durationMs());
-        return new AnalyzeResponse(http.url(), dns, http.statusCode(), http.totalTimeMs());
+
+        // Connect to a specific resolved address, the same one a client
+        // would actually reach - not the hostname again, which would let
+        // TCP silently redo DNS resolution.
+        String resolvedIp = dns.resolvedIps().get(0);
+        int port = portOf(url);
+
+        PhaseResult<TcpMetadata> tcpPhase;
+        try {
+            tcpPhase = tcpAnalyzer.analyze(resolvedIp, port);
+        } catch (IllegalArgumentException e) {
+            throw new InvalidUrlException(url);
+        }
+        if (tcpPhase.status() == PhaseResult.Status.FAILURE) {
+            throw tcpFailure(resolvedIp, port, tcpPhase.metadata().failureReason());
+        }
+        TcpResult tcp = new TcpResult(resolvedIp, port, tcpPhase.durationMs());
+
+        HttpResult http = httpAnalyzer.analyze(url);
+
+        return new AnalyzeResponse(http.url(), dns, tcp, http.statusCode(), http.totalTimeMs());
+    }
+
+    private static AnalysisException tcpFailure(String host, int port, TcpFailureReason reason) {
+        String target = host + ":" + port;
+        return switch (reason) {
+            case TIMEOUT -> new AnalysisException(AnalysisException.Reason.TIMEOUT,
+                    "Connection to " + target + " timed out", null);
+            case CONNECTION_REFUSED -> new AnalysisException(AnalysisException.Reason.CONNECTION_FAILURE,
+                    "Connection refused by " + target, null);
+            case UNREACHABLE -> new AnalysisException(AnalysisException.Reason.CONNECTION_FAILURE,
+                    "No route to host " + target, null);
+            case UNKNOWN -> new AnalysisException(AnalysisException.Reason.CONNECTION_FAILURE,
+                    "Failed to establish a TCP connection to " + target, null);
+        };
+    }
+
+    private static int portOf(String url) {
+        URI uri = URI.create(url);
+        if (uri.getPort() != -1) {
+            return uri.getPort();
+        }
+        return "https".equalsIgnoreCase(uri.getScheme()) ? 443 : 80;
     }
 }
