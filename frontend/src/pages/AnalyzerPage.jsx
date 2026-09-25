@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import AnalysisResult from '../components/AnalysisResult'
+import AnalysisSummary from '../components/AnalysisSummary'
 import Button from '../components/Button'
 import ErrorMessage from '../components/ErrorMessage'
 import TextInput from '../components/TextInput'
@@ -15,6 +15,7 @@ const STATUS = {
 function AnalyzerPage() {
   const [url, setUrl] = useState('')
   const [status, setStatus] = useState(STATUS.IDLE)
+  const [submittedUrl, setSubmittedUrl] = useState(null)
   const [result, setResult] = useState(null)
   const [error, setError] = useState(null)
 
@@ -22,7 +23,8 @@ function AnalyzerPage() {
 
   async function handleSubmit(e) {
     e.preventDefault()
-    if (!url.trim() || isLoading) {
+    const requestedUrl = url.trim()
+    if (!requestedUrl || isLoading) {
       return
     }
 
@@ -30,7 +32,8 @@ function AnalyzerPage() {
     setError(null)
 
     try {
-      const data = await analyzeUrl(url)
+      const data = await analyzeUrl(requestedUrl)
+      setSubmittedUrl(requestedUrl)
       setResult(data)
       setStatus(STATUS.SUCCESS)
     } catch (err) {
@@ -63,7 +66,9 @@ function AnalyzerPage() {
       </form>
 
       {status === STATUS.ERROR && <ErrorMessage message={error} />}
-      {status === STATUS.SUCCESS && result && <AnalysisResult result={result} />}
+      {status === STATUS.SUCCESS && result && (
+        <AnalysisSummary url={submittedUrl} result={result} />
+      )}
     </main>
   )
 }
