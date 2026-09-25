@@ -1,6 +1,6 @@
 # Architecture
 
-This describes Netrace's **target** Stage 1 architecture. For what is actually implemented today, see [Current Status](#current-status) at the bottom and the README's [Current Limitations](../README.md#current-limitations).
+This describes Netrace's Stage 1 architecture, which is implemented as described below — see [Current Status](#current-status) at the bottom for exactly what that covers, and the README's [Current Roadmap](../README.md#13-current-roadmap) for what's deliberately not here yet.
 
 ## Components
 
@@ -32,9 +32,9 @@ No persistence, no authentication, no multi-URL comparison, no historical tracki
 
 ## Current Status
 
-As of this commit, none of the request flow above is wired up yet:
+The request flow above is implemented end to end:
 
-- The backend has no `/api/analyze` endpoint, controller, service, or DTO — just the generated Spring Boot application skeleton.
-- The frontend has the URL input and Analyze button, but the button doesn't call anything, and there's no API client yet.
+- The backend exposes `POST /api/analyze`, backed by a controller, service, and DTO layer, performing the real DNS/TCP/TLS probes and HTTP request described here and validating every target against the SSRF guard (see [Security](#security)) before connecting.
+- The frontend's Analyze button calls that endpoint through a real API client and renders the response as a summary, a waterfall timeline, and per-phase detail panels.
 
-This document describes the design being built toward, not current behavior.
+See the README's [Current Roadmap](../README.md#13-current-roadmap) for what's intentionally not built yet (persistence, auth, multi-URL comparison, historical tracking, and a short list of smaller Stage 1 polish items).
