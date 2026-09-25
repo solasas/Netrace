@@ -1,9 +1,43 @@
 import { useState } from 'react'
+import AnalysisResult from '../components/AnalysisResult'
 import Button from '../components/Button'
+import ErrorMessage from '../components/ErrorMessage'
 import TextInput from '../components/TextInput'
+import { analyzeUrl } from '../services/analyzeService'
+
+const STATUS = {
+  IDLE: 'idle',
+  LOADING: 'loading',
+  SUCCESS: 'success',
+  ERROR: 'error',
+}
 
 function AnalyzerPage() {
   const [url, setUrl] = useState('')
+  const [status, setStatus] = useState(STATUS.IDLE)
+  const [result, setResult] = useState(null)
+  const [error, setError] = useState(null)
+
+  const isLoading = status === STATUS.LOADING
+
+  async function handleSubmit(e) {
+    e.preventDefault()
+    if (!url.trim() || isLoading) {
+      return
+    }
+
+    setStatus(STATUS.LOADING)
+    setError(null)
+
+    try {
+      const data = await analyzeUrl(url)
+      setResult(data)
+      setStatus(STATUS.SUCCESS)
+    } catch (err) {
+      setError(err.message)
+      setStatus(STATUS.ERROR)
+    }
+  }
 
   return (
     <main className="mx-auto flex min-h-screen max-w-2xl flex-col gap-8 px-4 py-16">
@@ -15,15 +49,21 @@ function AnalyzerPage() {
         </p>
       </header>
 
-      <form className="flex flex-col gap-3 sm:flex-row">
+      <form className="flex flex-col gap-3 sm:flex-row" onSubmit={handleSubmit}>
         <TextInput
           type="url"
           placeholder="https://example.com"
           value={url}
           onChange={(e) => setUrl(e.target.value)}
+          disabled={isLoading}
         />
-        <Button>Analyze</Button>
+        <Button type="submit" disabled={isLoading || !url.trim()}>
+          {isLoading ? 'Analyzing…' : 'Analyze'}
+        </Button>
       </form>
+
+      {status === STATUS.ERROR && <ErrorMessage message={error} />}
+      {status === STATUS.SUCCESS && result && <AnalysisResult result={result} />}
     </main>
   )
 }
