@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import AnalysisSummary from '../components/AnalysisSummary'
 import Button from '../components/Button'
+import DnsDetails from '../components/DnsDetails'
 import ErrorMessage from '../components/ErrorMessage'
 import TextInput from '../components/TextInput'
 import { analyzeUrl } from '../services/analyzeService'
@@ -67,7 +68,10 @@ function AnalyzerPage() {
 
       {status === STATUS.ERROR && <ErrorMessage message={error} />}
       {status === STATUS.SUCCESS && result && (
-        <AnalysisSummary url={submittedUrl} result={result} />
+        <>
+          <AnalysisSummary url={submittedUrl} result={result} />
+          <DnsDetails dns={result.probes?.dns} />
+        </>
       )}
     </main>
   )
