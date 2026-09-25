@@ -10,8 +10,15 @@ import org.junit.jupiter.api.Test;
 import java.io.IOException;
 import java.net.NoRouteToHostException;
 import java.net.ServerSocket;
+import java.net.Socket;
 import java.net.SocketTimeoutException;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -121,5 +128,88 @@ class TcpAnalyzerTest {
     void throwsForAPortAboveTheValidRange() {
         assertThatThrownBy(() -> analyzer.analyze("127.0.0.1", 70000))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void constructorRejectsAZeroConnectTimeout() {
+        // Socket.connect(address, 0) means "block forever," not "fail
+        // immediately" - a 0 config value must never reach it.
+        assertThatThrownBy(() -> new TcpAnalyzer(new AnalyzerProperties(Duration.ZERO, Duration.ofSeconds(2))))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void constructorRejectsANegativeConnectTimeout() {
+        assertThatThrownBy(() ->
+                new TcpAnalyzer(new AnalyzerProperties(Duration.ofSeconds(-1), Duration.ofSeconds(2))))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void isSafeForConcurrentUseAsASharedSingleton() throws Exception {
+        serverSocket = new ServerSocket(0);
+        int port = serverSocket.getLocalPort();
+        Thread acceptorThread = acceptAndCloseLoop(serverSocket);
+        acceptorThread.start();
+
+        int taskCount = 20;
+        ExecutorService executor = Executors.newFixedThreadPool(taskCount);
+        try {
+            List<Callable<PhaseResult<TcpMetadata>>> tasks = new ArrayList<>();
+            for (int i = 0; i < taskCount; i++) {
+                tasks.add(() -> analyzer.analyze("127.0.0.1", port));
+            }
+
+            List<Future<PhaseResult<TcpMetadata>>> futures = executor.invokeAll(tasks);
+
+            for (Future<PhaseResult<TcpMetadata>> future : futures) {
+                PhaseResult<TcpMetadata> result = future.get();
+                assertThat(result.status()).isEqualTo(PhaseResult.Status.SUCCESS);
+                assertThat(result.metadata().host()).isEqualTo("127.0.0.1");
+                assertThat(result.metadata().port()).isEqualTo(port);
+                assertThat(result.durationMs()).isGreaterThanOrEqualTo(0);
+            }
+        } finally {
+            executor.shutdownNow();
+            serverSocket.close();
+            acceptorThread.join(2000);
+        }
+    }
+
+    @Test
+    void closesEverySocketAcrossManySequentialConnections() throws Exception {
+        // If sockets weren't being closed, file descriptors would exhaust
+        // partway through this loop and later iterations would start
+        // failing - this is a real leak check, not just trusting
+        // try-with-resources by inspection.
+        serverSocket = new ServerSocket(0);
+        int port = serverSocket.getLocalPort();
+        Thread acceptorThread = acceptAndCloseLoop(serverSocket);
+        acceptorThread.start();
+
+        try {
+            for (int i = 0; i < 500; i++) {
+                PhaseResult<TcpMetadata> result = analyzer.analyze("127.0.0.1", port);
+                assertThat(result.status())
+                        .as("iteration %d should still succeed if sockets are being closed, not leaked", i)
+                        .isEqualTo(PhaseResult.Status.SUCCESS);
+            }
+        } finally {
+            serverSocket.close();
+            acceptorThread.join(2000);
+        }
+    }
+
+    private static Thread acceptAndCloseLoop(ServerSocket serverSocket) {
+        return new Thread(() -> {
+            try {
+                while (!serverSocket.isClosed()) {
+                    Socket accepted = serverSocket.accept();
+                    accepted.close();
+                }
+            } catch (IOException ignored) {
+                // Expected once the test closes serverSocket to stop the loop.
+            }
+        });
     }
 }

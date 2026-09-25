@@ -39,6 +39,25 @@ import java.net.SocketTimeoutException;
  * An out-of-range destination port is different: no connection is ever
  * attempted, so there is no meaningful duration to report. That case
  * throws IllegalArgumentException immediately instead.
+ * <p>
+ * Resource lifecycle: the real Socket is opened and closed entirely
+ * within one try-with-resources block (see connectWithRealSocket), so
+ * it is closed on every path - success, any IOException, including a
+ * timeout - before analyze() ever sees control return.
+ * <p>
+ * Thread safety: this class holds no mutable state (timeoutMs and
+ * connector are both final, set once at construction); every value
+ * used during a call to analyze() is local to that call. It is safe to
+ * use concurrently as the Spring singleton it is.
+ * <p>
+ * Timeout behavior: java.net.Socket.connect(address, timeout) treats a
+ * timeout of exactly 0 as "block forever," not "fail immediately" -
+ * the opposite of what a 0 setting would suggest. To make sure a
+ * misconfigured netrace.analyzer.connect-timeout of 0 (or negative)
+ * can never cause a request thread to hang indefinitely, the
+ * configured timeout is validated once at construction, not
+ * per-request, so a bad value fails loudly at startup instead of
+ * silently on the first real request.
  */
 @Component
 public class TcpAnalyzer {
@@ -50,7 +69,7 @@ public class TcpAnalyzer {
         void connect(String host, int port, int timeoutMs) throws IOException;
     }
 
-    private final AnalyzerProperties analyzerProperties;
+    private final int timeoutMs;
     private final Connector connector;
 
     @Autowired
@@ -59,7 +78,13 @@ public class TcpAnalyzer {
     }
 
     TcpAnalyzer(AnalyzerProperties analyzerProperties, Connector connector) {
-        this.analyzerProperties = analyzerProperties;
+        long configuredTimeoutMs = analyzerProperties.connectTimeout().toMillis();
+        if (configuredTimeoutMs <= 0) {
+            throw new IllegalStateException(
+                    "netrace.analyzer.connect-timeout must be positive, was "
+                            + analyzerProperties.connectTimeout());
+        }
+        this.timeoutMs = Math.toIntExact(configuredTimeoutMs);
         this.connector = connector;
     }
 
@@ -73,7 +98,6 @@ public class TcpAnalyzer {
         if (port < 0 || port > 65535) {
             throw new IllegalArgumentException("Invalid destination port: " + port);
         }
-        int timeoutMs = (int) analyzerProperties.connectTimeout().toMillis();
 
         long startNanos = System.nanoTime();
         try {
