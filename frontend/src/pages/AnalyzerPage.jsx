@@ -5,6 +5,7 @@ import DnsDetails from '../components/DnsDetails'
 import ErrorMessage from '../components/ErrorMessage'
 import TcpDetails from '../components/TcpDetails'
 import TextInput from '../components/TextInput'
+import TlsDetails from '../components/TlsDetails'
 import { analyzeUrl } from '../services/analyzeService'
 
 const STATUS = {
@@ -79,6 +80,7 @@ function AnalyzerPage() {
               durationMs={result.probes.tcp.durationMs}
             />
           )}
+          <TlsDetails tls={result.probes?.tls} />
         </>
       )}
     </main>
