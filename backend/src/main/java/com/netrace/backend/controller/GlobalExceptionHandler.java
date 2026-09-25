@@ -49,6 +49,10 @@ public class GlobalExceptionHandler {
             case TIMEOUT -> HttpStatus.GATEWAY_TIMEOUT;
             case DNS_FAILURE, CONNECTION_FAILURE, INVALID_RESPONSE -> HttpStatus.BAD_GATEWAY;
         };
+        // The cause (with its raw, possibly OS-specific message) is logged
+        // here for operators; only our own crafted e.getMessage() ever
+        // reaches the client.
+        log.warn("Analysis failed with reason {}: {}", e.reason(), e.getMessage(), e);
         return errorResponse(status, e.reason().name(), e.getMessage());
     }
 

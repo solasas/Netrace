@@ -5,8 +5,10 @@ import com.netrace.backend.analyzer.DnsAnalyzer;
 import com.netrace.backend.analyzer.HttpAnalyzer;
 import com.netrace.backend.dto.AnalyzeRequest;
 import com.netrace.backend.dto.AnalyzeResponse;
+import com.netrace.backend.dto.DnsMetadata;
 import com.netrace.backend.dto.DnsResult;
 import com.netrace.backend.dto.HttpResult;
+import com.netrace.backend.dto.PhaseResult;
 import com.netrace.backend.validation.UrlValidator;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -35,16 +37,18 @@ class AnalysisServiceTest {
     @Test
     void combinesDnsAndHttpResultsWhenTheUrlIsValid() {
         String url = "https://example.com";
-        DnsResult dns = new DnsResult("example.com", List.of("93.184.216.34"), 12L);
+        PhaseResult<DnsMetadata> dnsPhase = PhaseResult.success(
+                "DNS", 12L, new DnsMetadata("example.com", List.of("93.184.216.34")));
         HttpResult http = new HttpResult(url, 200, 42L);
         when(urlValidator.isValid(url)).thenReturn(true);
-        when(dnsAnalyzer.analyze(url)).thenReturn(dns);
+        when(dnsAnalyzer.analyze(url)).thenReturn(dnsPhase);
         when(httpAnalyzer.analyze(url)).thenReturn(http);
         AnalysisService service = new AnalysisService(urlValidator, dnsAnalyzer, httpAnalyzer);
 
         AnalyzeResponse actual = service.analyze(new AnalyzeRequest(url));
 
-        assertThat(actual).isEqualTo(new AnalyzeResponse(url, dns, 200, 42L));
+        DnsResult expectedDns = new DnsResult("example.com", List.of("93.184.216.34"), 12L);
+        assertThat(actual).isEqualTo(new AnalyzeResponse(url, expectedDns, 200, 42L));
     }
 
     @Test
@@ -78,11 +82,12 @@ class AnalysisServiceTest {
     @Test
     void propagatesAnHttpFailureAfterDnsSucceeds() {
         String url = "https://example.com";
-        DnsResult dns = new DnsResult("example.com", List.of("93.184.216.34"), 12L);
+        PhaseResult<DnsMetadata> dnsPhase = PhaseResult.success(
+                "DNS", 12L, new DnsMetadata("example.com", List.of("93.184.216.34")));
         AnalysisException failure = new AnalysisException(
                 AnalysisException.Reason.CONNECTION_FAILURE, "boom", new RuntimeException());
         when(urlValidator.isValid(url)).thenReturn(true);
-        when(dnsAnalyzer.analyze(url)).thenReturn(dns);
+        when(dnsAnalyzer.analyze(url)).thenReturn(dnsPhase);
         when(httpAnalyzer.analyze(url)).thenThrow(failure);
         AnalysisService service = new AnalysisService(urlValidator, dnsAnalyzer, httpAnalyzer);
 
