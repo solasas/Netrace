@@ -4,11 +4,13 @@ import Button from '../components/Button'
 import DnsDetails from '../components/DnsDetails'
 import ErrorMessage from '../components/ErrorMessage'
 import HttpDetails from '../components/HttpDetails'
+import LoadingState from '../components/LoadingState'
 import TcpDetails from '../components/TcpDetails'
 import TextInput from '../components/TextInput'
 import TlsDetails from '../components/TlsDetails'
 import Waterfall from '../components/Waterfall'
-import { analyzeUrl } from '../services/analyzeService'
+import { AnalysisError, analyzeUrl } from '../services/analyzeService'
+import { friendlyHeadline } from '../utils/errorMessages'
 
 const STATUS = {
   IDLE: 'idle',
@@ -17,34 +19,74 @@ const STATUS = {
   ERROR: 'error',
 }
 
+const EXAMPLE_URL = 'https://example.com'
+
+function isValidHttpUrl(value) {
+  try {
+    const parsed = new URL(value)
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
+function validationMessage(trimmedUrl) {
+  if (trimmedUrl.length === 0) {
+    return 'Enter a URL to analyze.'
+  }
+  if (!isValidHttpUrl(trimmedUrl)) {
+    return 'Enter a valid http or https URL.'
+  }
+  return null
+}
+
 function AnalyzerPage() {
   const [url, setUrl] = useState('')
+  const [touched, setTouched] = useState(false)
   const [status, setStatus] = useState(STATUS.IDLE)
   const [submittedUrl, setSubmittedUrl] = useState(null)
   const [result, setResult] = useState(null)
   const [error, setError] = useState(null)
 
   const isLoading = status === STATUS.LOADING
+  const trimmedUrl = url.trim()
+  const currentValidationMessage = touched ? validationMessage(trimmedUrl) : null
 
   async function handleSubmit(e) {
     e.preventDefault()
-    const requestedUrl = url.trim()
-    if (!requestedUrl || isLoading) {
+    if (isLoading) {
+      return
+    }
+    setTouched(true)
+
+    const message = validationMessage(trimmedUrl)
+    if (message) {
       return
     }
 
     setStatus(STATUS.LOADING)
+    setSubmittedUrl(trimmedUrl)
     setError(null)
 
     try {
-      const data = await analyzeUrl(requestedUrl)
-      setSubmittedUrl(requestedUrl)
+      const data = await analyzeUrl(trimmedUrl)
       setResult(data)
       setStatus(STATUS.SUCCESS)
     } catch (err) {
-      setError(err.message)
+      const errorCode = err instanceof AnalysisError ? err.errorCode : null
+      setError({ headline: friendlyHeadline(errorCode, err.message), message: err.message })
       setStatus(STATUS.ERROR)
     }
+  }
+
+  function handleClear() {
+    setUrl('')
+    setTouched(false)
+  }
+
+  function handleUseExample() {
+    setUrl(EXAMPLE_URL)
+    setTouched(false)
   }
 
   return (
@@ -57,20 +99,44 @@ function AnalyzerPage() {
         </p>
       </header>
 
-      <form className="flex flex-col gap-3 sm:flex-row" onSubmit={handleSubmit}>
-        <TextInput
-          type="url"
-          placeholder="https://example.com"
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-          disabled={isLoading}
-        />
-        <Button type="submit" disabled={isLoading || !url.trim()}>
-          {isLoading ? 'Analyzing…' : 'Analyze'}
-        </Button>
-      </form>
+      <div className="flex flex-col gap-2">
+        <form className="flex flex-col gap-3 sm:flex-row" onSubmit={handleSubmit}>
+          <TextInput
+            type="url"
+            placeholder="https://example.com"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            onBlur={() => setTouched(true)}
+            onClear={handleClear}
+            disabled={isLoading}
+            invalid={Boolean(currentValidationMessage)}
+            aria-invalid={Boolean(currentValidationMessage)}
+          />
+          <Button type="submit" disabled={isLoading}>
+            {isLoading ? 'Analyzing…' : 'Analyze'}
+          </Button>
+        </form>
 
-      {status === STATUS.ERROR && <ErrorMessage message={error} />}
+        <div className="flex items-center justify-between gap-3 text-xs">
+          {currentValidationMessage ? (
+            <p className="text-red-600">{currentValidationMessage}</p>
+          ) : (
+            <span />
+          )}
+          <button
+            type="button"
+            onClick={handleUseExample}
+            className="shrink-0 text-indigo-600 hover:underline"
+          >
+            Try {EXAMPLE_URL}
+          </button>
+        </div>
+      </div>
+
+      {status === STATUS.LOADING && <LoadingState url={submittedUrl} />}
+      {status === STATUS.ERROR && error && (
+        <ErrorMessage headline={error.headline} message={error.message} />
+      )}
       {status === STATUS.SUCCESS && result && (
         <>
           <AnalysisSummary url={submittedUrl} result={result} />

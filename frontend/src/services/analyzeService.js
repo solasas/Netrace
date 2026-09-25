@@ -1,3 +1,11 @@
+export class AnalysisError extends Error {
+  constructor(message, errorCode) {
+    super(message)
+    this.name = 'AnalysisError'
+    this.errorCode = errorCode
+  }
+}
+
 export async function analyzeUrl(url) {
   const response = await fetch('/api/analyze', {
     method: 'POST',
@@ -8,7 +16,7 @@ export async function analyzeUrl(url) {
   const body = await response.json()
 
   if (!response.ok) {
-    throw new Error(body.message || 'Analysis failed')
+    throw new AnalysisError(body.message || 'Analysis failed', body.error)
   }
 
   return body
