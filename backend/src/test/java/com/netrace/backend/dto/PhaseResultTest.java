@@ -15,4 +15,14 @@ class PhaseResultTest {
         assertThat(result.status()).isEqualTo(PhaseResult.Status.SUCCESS);
         assertThat(result.metadata()).isEqualTo("some metadata");
     }
+
+    @Test
+    void failureFactoryPopulatesAllFieldsWithFailureStatus() {
+        PhaseResult<String> result = PhaseResult.failure("TCP", 30L, "some metadata");
+
+        assertThat(result.phase()).isEqualTo("TCP");
+        assertThat(result.durationMs()).isEqualTo(30L);
+        assertThat(result.status()).isEqualTo(PhaseResult.Status.FAILURE);
+        assertThat(result.metadata()).isEqualTo("some metadata");
+    }
 }
