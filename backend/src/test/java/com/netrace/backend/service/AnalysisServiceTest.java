@@ -11,6 +11,7 @@ import com.netrace.backend.dto.DnsMetadata;
 import com.netrace.backend.dto.DnsResult;
 import com.netrace.backend.dto.HttpResult;
 import com.netrace.backend.dto.PhaseResult;
+import com.netrace.backend.dto.Probes;
 import com.netrace.backend.dto.TcpFailureReason;
 import com.netrace.backend.dto.TcpMetadata;
 import com.netrace.backend.dto.TcpResult;
@@ -86,8 +87,10 @@ class AnalysisServiceTest {
         TcpResult expectedTcp = new TcpResult("93.184.216.34", 443, 8L);
         TlsResult expectedTls =
                 new TlsResult("TLSv1.3", "TLS_AES_128_GCM_SHA256", "CN=example.com", "CN=Test CA", 20L);
+        Probes expectedProbes = new Probes(expectedDns, expectedTcp, expectedTls);
         assertThat(actual)
-                .isEqualTo(new AnalyzeResponse(url, expectedDns, expectedTcp, expectedTls, 200, "HTTP/2", 1234L, "text/html", 42L));
+                .isEqualTo(new AnalyzeResponse(
+                        url, 200, "HTTP/2", 1234L, "text/html", 30L, 12L, false, 42L, expectedProbes));
     }
 
     @Test
@@ -100,7 +103,7 @@ class AnalysisServiceTest {
 
         AnalyzeResponse actual = service().analyze(new AnalyzeRequest(url));
 
-        assertThat(actual.tls()).isNull();
+        assertThat(actual.probes().tls()).isNull();
         verifyNoInteractions(tlsAnalyzer);
     }
 

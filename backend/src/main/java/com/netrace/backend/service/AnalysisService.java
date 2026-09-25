@@ -11,6 +11,7 @@ import com.netrace.backend.dto.DnsMetadata;
 import com.netrace.backend.dto.DnsResult;
 import com.netrace.backend.dto.HttpResult;
 import com.netrace.backend.dto.PhaseResult;
+import com.netrace.backend.dto.Probes;
 import com.netrace.backend.dto.TcpFailureReason;
 import com.netrace.backend.dto.TcpMetadata;
 import com.netrace.backend.dto.TcpResult;
@@ -28,9 +29,9 @@ import java.net.URI;
  * resolved destination (TcpAnalyzer), perform a fresh TLS handshake
  * over that same destination (TlsAnalyzer), then run the real HTTP
  * request (HttpAnalyzer). For an HTTP URL, the TLS phase is skipped
- * entirely - it is not applicable, so AnalyzeResponse.tls is null
- * rather than some placeholder/empty result. Keeps this orchestration
- * out of the controller.
+ * entirely - it is not applicable, so Probes.tls is null rather than
+ * some placeholder/empty result. Keeps this orchestration out of the
+ * controller.
  * <p>
  * A DNS, TCP, or TLS failure short-circuits before the next phase
  * runs - if the resolved address refuses connections or rejects the
@@ -43,10 +44,14 @@ import java.net.URI;
  * translated into InvalidUrlException (400) instead.
  * <p>
  * PhaseResult from DnsAnalyzer/TcpAnalyzer/TlsAnalyzer is unwrapped
- * back into the existing flat DnsResult/TcpResult/TlsResult shapes
- * here, so AnalyzeResponse's JSON contract stays a simple,
- * flat-per-phase object rather than exposing the generic phase/status
- * wrapper to API consumers.
+ * back into the existing flat DnsResult/TcpResult/TlsResult shapes and
+ * grouped under Probes, kept structurally separate from the real HTTP
+ * request's own fields on AnalyzeResponse (statusCode, protocol,
+ * ttfbMs, downloadMs, totalTimeMs, ...) - DnsAnalyzer/TcpAnalyzer/
+ * TlsAnalyzer each use their own fresh, dedicated connection, never
+ * reused by HttpAnalyzer's real request, so their durations are
+ * independent measurements, not sequential phases of one timeline that
+ * sum to totalTimeMs. See docs/measurement.md.
  */
 @Service
 public class AnalysisService {
@@ -113,8 +118,18 @@ public class AnalysisService {
 
         HttpResult http = httpAnalyzer.analyze(url);
 
-        return new AnalyzeResponse(http.url(), dns, tcp, tls, http.statusCode(), http.protocol(),
-                http.contentLength(), http.contentType(), http.totalTimeMs());
+        Probes probes = new Probes(dns, tcp, tls);
+        return new AnalyzeResponse(
+                http.url(),
+                http.statusCode(),
+                http.protocol(),
+                http.contentLength(),
+                http.contentType(),
+                http.ttfbMs(),
+                http.downloadMs(),
+                http.bodyTruncated(),
+                http.totalTimeMs(),
+                probes);
     }
 
     private static AnalysisException tcpFailure(String host, int port, TcpFailureReason reason) {

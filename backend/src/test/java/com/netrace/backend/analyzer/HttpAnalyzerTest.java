@@ -53,6 +53,9 @@ class HttpAnalyzerTest {
         assertThat(response.totalTimeMs()).isGreaterThanOrEqualTo(0);
         assertThat(response.ttfbMs()).isGreaterThanOrEqualTo(0);
         assertThat(response.ttfbMs()).isLessThanOrEqualTo(response.totalTimeMs());
+        assertThat(response.ttfbMs() + response.downloadMs())
+                .as("totalTimeMs is the only field ttfbMs/downloadMs are guaranteed to sum to")
+                .isEqualTo(response.totalTimeMs());
         assertThat(response.protocol()).isEqualTo("HTTP/1.1");
     }
 
@@ -170,6 +173,7 @@ class HttpAnalyzerTest {
         assertThat(response.totalTimeMs() - response.ttfbMs())
                 .as("the gap between ttfb and total should reflect the body delay, not be ~0")
                 .isGreaterThanOrEqualTo(200);
+        assertThat(response.ttfbMs() + response.downloadMs()).isEqualTo(response.totalTimeMs());
     }
 
     @Test
@@ -221,6 +225,9 @@ class HttpAnalyzerTest {
         assertThat(response.totalTimeMs())
                 .as("should abandon the download quickly rather than waiting for the full ~4MB body")
                 .isLessThan(5000);
+        assertThat(response.ttfbMs() + response.downloadMs())
+                .as("the invariant must hold even when the download is abandoned early, not just on a full download")
+                .isEqualTo(response.totalTimeMs());
     }
 
     @Test

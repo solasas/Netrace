@@ -53,20 +53,25 @@ class AnalyzeEndpointIntegrationTest {
         assertThat(response.getBody().statusCode()).isEqualTo(200);
         assertThat(response.getBody().url()).startsWith("https://example.com");
         assertThat(response.getBody().totalTimeMs()).isGreaterThanOrEqualTo(0);
-        assertThat(response.getBody().dns()).isNotNull();
-        assertThat(response.getBody().dns().hostname()).isEqualTo("example.com");
-        assertThat(response.getBody().dns().resolvedIps()).isNotEmpty();
-        assertThat(response.getBody().dns().durationMs()).isGreaterThanOrEqualTo(0);
-        assertThat(response.getBody().tcp()).isNotNull();
-        assertThat(response.getBody().tcp().host()).isEqualTo(response.getBody().dns().resolvedIps().get(0));
-        assertThat(response.getBody().tcp().port()).isEqualTo(443);
-        assertThat(response.getBody().tcp().durationMs()).isGreaterThanOrEqualTo(0);
-        assertThat(response.getBody().tls()).isNotNull();
-        assertThat(response.getBody().tls().tlsVersion()).startsWith("TLSv1");
-        assertThat(response.getBody().tls().cipherSuite()).isNotBlank();
-        assertThat(response.getBody().tls().certificateSubject()).isNotBlank();
-        assertThat(response.getBody().tls().certificateIssuer()).isNotBlank();
-        assertThat(response.getBody().tls().durationMs()).isGreaterThanOrEqualTo(0);
+        assertThat(response.getBody().ttfbMs()).isGreaterThanOrEqualTo(0);
+        assertThat(response.getBody().downloadMs()).isGreaterThanOrEqualTo(0);
+        assertThat(response.getBody().ttfbMs() + response.getBody().downloadMs())
+                .isEqualTo(response.getBody().totalTimeMs());
+        assertThat(response.getBody().probes().dns()).isNotNull();
+        assertThat(response.getBody().probes().dns().hostname()).isEqualTo("example.com");
+        assertThat(response.getBody().probes().dns().resolvedIps()).isNotEmpty();
+        assertThat(response.getBody().probes().dns().durationMs()).isGreaterThanOrEqualTo(0);
+        assertThat(response.getBody().probes().tcp()).isNotNull();
+        assertThat(response.getBody().probes().tcp().host())
+                .isEqualTo(response.getBody().probes().dns().resolvedIps().get(0));
+        assertThat(response.getBody().probes().tcp().port()).isEqualTo(443);
+        assertThat(response.getBody().probes().tcp().durationMs()).isGreaterThanOrEqualTo(0);
+        assertThat(response.getBody().probes().tls()).isNotNull();
+        assertThat(response.getBody().probes().tls().tlsVersion()).startsWith("TLSv1");
+        assertThat(response.getBody().probes().tls().cipherSuite()).isNotBlank();
+        assertThat(response.getBody().probes().tls().certificateSubject()).isNotBlank();
+        assertThat(response.getBody().probes().tls().certificateIssuer()).isNotBlank();
+        assertThat(response.getBody().probes().tls().durationMs()).isGreaterThanOrEqualTo(0);
         assertThat(response.getBody().protocol()).isIn("HTTP/1.1", "HTTP/2");
         // Not asserting an exact contentLength here: whether Cloudflare
         // sends a Content-Length or uses chunked transfer for this page
@@ -95,13 +100,16 @@ class AnalyzeEndpointIntegrationTest {
         assertThat(response.getBody()).isNotNull();
         assertThat(response.getBody().statusCode()).isEqualTo(200);
         assertThat(response.getBody().url()).isEqualTo(url);
-        assertThat(response.getBody().dns()).isNotNull();
-        assertThat(response.getBody().dns().hostname()).isEqualTo("localhost");
-        assertThat(response.getBody().dns().resolvedIps()).isNotEmpty();
-        assertThat(response.getBody().tcp()).isNotNull();
-        assertThat(response.getBody().tcp().port()).isEqualTo(localServer.getAddress().getPort());
-        assertThat(response.getBody().tcp().durationMs()).isGreaterThanOrEqualTo(0);
-        assertThat(response.getBody().tls()).isNull();
+        assertThat(response.getBody().ttfbMs() + response.getBody().downloadMs())
+                .isEqualTo(response.getBody().totalTimeMs());
+        assertThat(response.getBody().bodyTruncated()).isFalse();
+        assertThat(response.getBody().probes().dns()).isNotNull();
+        assertThat(response.getBody().probes().dns().hostname()).isEqualTo("localhost");
+        assertThat(response.getBody().probes().dns().resolvedIps()).isNotEmpty();
+        assertThat(response.getBody().probes().tcp()).isNotNull();
+        assertThat(response.getBody().probes().tcp().port()).isEqualTo(localServer.getAddress().getPort());
+        assertThat(response.getBody().probes().tcp().durationMs()).isGreaterThanOrEqualTo(0);
+        assertThat(response.getBody().probes().tls()).isNull();
         assertThat(response.getBody().protocol()).isEqualTo("HTTP/1.1");
         assertThat(response.getBody().contentType()).isEqualTo("text/plain");
         assertThat(response.getBody().contentLength()).isEqualTo((long) body.length);

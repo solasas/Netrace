@@ -3,6 +3,7 @@ package com.netrace.backend.controller;
 import com.netrace.backend.analyzer.AnalysisException;
 import com.netrace.backend.dto.AnalyzeResponse;
 import com.netrace.backend.dto.DnsResult;
+import com.netrace.backend.dto.Probes;
 import com.netrace.backend.dto.TcpResult;
 import com.netrace.backend.dto.TlsResult;
 import com.netrace.backend.service.AnalysisService;
@@ -36,29 +37,34 @@ class AnalyzeControllerTest {
         DnsResult dns = new DnsResult("example.com", List.of("93.184.216.34"), 12L);
         TcpResult tcp = new TcpResult("93.184.216.34", 443, 8L);
         TlsResult tls = new TlsResult("TLSv1.3", "TLS_AES_128_GCM_SHA256", "CN=example.com", "CN=Test CA", 20L);
+        Probes probes = new Probes(dns, tcp, tls);
         when(analysisService.analyze(any())).thenReturn(
-                new AnalyzeResponse("https://example.com", dns, tcp, tls, 200, "HTTP/2", 1234L, "text/html", 123L));
+                new AnalyzeResponse("https://example.com", 200, "HTTP/2", 1234L, "text/html",
+                        100L, 23L, false, 123L, probes));
 
         mockMvc.perform(post("/api/analyze")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"url\":\"https://example.com\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.url").value("https://example.com"))
-                .andExpect(jsonPath("$.dns.hostname").value("example.com"))
-                .andExpect(jsonPath("$.dns.resolvedIps[0]").value("93.184.216.34"))
-                .andExpect(jsonPath("$.dns.durationMs").value(12))
-                .andExpect(jsonPath("$.tcp.host").value("93.184.216.34"))
-                .andExpect(jsonPath("$.tcp.port").value(443))
-                .andExpect(jsonPath("$.tcp.durationMs").value(8))
-                .andExpect(jsonPath("$.tls.tlsVersion").value("TLSv1.3"))
-                .andExpect(jsonPath("$.tls.cipherSuite").value("TLS_AES_128_GCM_SHA256"))
-                .andExpect(jsonPath("$.tls.certificateSubject").value("CN=example.com"))
-                .andExpect(jsonPath("$.tls.certificateIssuer").value("CN=Test CA"))
-                .andExpect(jsonPath("$.tls.durationMs").value(20))
+                .andExpect(jsonPath("$.probes.dns.hostname").value("example.com"))
+                .andExpect(jsonPath("$.probes.dns.resolvedIps[0]").value("93.184.216.34"))
+                .andExpect(jsonPath("$.probes.dns.durationMs").value(12))
+                .andExpect(jsonPath("$.probes.tcp.host").value("93.184.216.34"))
+                .andExpect(jsonPath("$.probes.tcp.port").value(443))
+                .andExpect(jsonPath("$.probes.tcp.durationMs").value(8))
+                .andExpect(jsonPath("$.probes.tls.tlsVersion").value("TLSv1.3"))
+                .andExpect(jsonPath("$.probes.tls.cipherSuite").value("TLS_AES_128_GCM_SHA256"))
+                .andExpect(jsonPath("$.probes.tls.certificateSubject").value("CN=example.com"))
+                .andExpect(jsonPath("$.probes.tls.certificateIssuer").value("CN=Test CA"))
+                .andExpect(jsonPath("$.probes.tls.durationMs").value(20))
                 .andExpect(jsonPath("$.statusCode").value(200))
                 .andExpect(jsonPath("$.protocol").value("HTTP/2"))
                 .andExpect(jsonPath("$.contentLength").value(1234))
                 .andExpect(jsonPath("$.contentType").value("text/html"))
+                .andExpect(jsonPath("$.ttfbMs").value(100))
+                .andExpect(jsonPath("$.downloadMs").value(23))
+                .andExpect(jsonPath("$.bodyTruncated").value(false))
                 .andExpect(jsonPath("$.totalTimeMs").value(123));
     }
 
@@ -66,14 +72,16 @@ class AnalyzeControllerTest {
     void returnsNullTlsAndHttp1_1ProtocolForAnHttpUrl() throws Exception {
         DnsResult dns = new DnsResult("example.com", List.of("93.184.216.34"), 12L);
         TcpResult tcp = new TcpResult("93.184.216.34", 80, 8L);
+        Probes probes = new Probes(dns, tcp, null);
         when(analysisService.analyze(any())).thenReturn(
-                new AnalyzeResponse("http://example.com", dns, tcp, null, 200, "HTTP/1.1", null, "text/plain", 123L));
+                new AnalyzeResponse("http://example.com", 200, "HTTP/1.1", null, "text/plain",
+                        100L, 23L, false, 123L, probes));
 
         mockMvc.perform(post("/api/analyze")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"url\":\"http://example.com\"}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.tls").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.probes.tls").value(org.hamcrest.Matchers.nullValue()))
                 .andExpect(jsonPath("$.protocol").value("HTTP/1.1"))
                 .andExpect(jsonPath("$.contentLength").value(org.hamcrest.Matchers.nullValue()))
                 .andExpect(jsonPath("$.contentType").value("text/plain"));
