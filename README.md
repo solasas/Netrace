@@ -10,23 +10,33 @@ The one thing Netrace is opinionated about: it will not report a number as more 
 
 ## 2. Stage 1 Scope
 
-Stage 1's target: a user submits a single public URL, the backend makes a real HTTP(S) request to it, and the frontend displays the observed measurements in a dashboard with a waterfall-style timeline. As of this document, that target is **implemented**:
+Stage 1's target: a user submits a single or multiple public URLs, the backend makes real HTTP(S) requests to them, and the frontend displays the observed measurements in interactive dashboards with waterfall-style timelines and multi-URL comparison views. As of this document, that target is **implemented**:
 
-| Measurement | Status |
-|---|---|
-| DNS resolution | ✅ |
-| TCP connection establishment | ✅ |
-| TLS handshake (HTTPS) | ✅ |
-| HTTP request/response | ✅ |
-| Time to First Byte (TTFB) | ✅ |
-| Response download time | ✅ |
-| Total observed request duration | ✅ |
-| HTTP status code | ✅ |
-| Resolved IP address | ✅ |
-| HTTP protocol/version | ✅ (HTTP/1.1, HTTP/2 — see [limitations](#11-measurement-limitations) on HTTP/3) |
-| Waterfall visualization | ✅ |
+| Feature | Status | Details |
+|---|---|---|
+| **Single-URL Analysis** | ✅ Complete | |
+| DNS resolution | ✅ | Independent diagnostic probe |
+| TCP connection establishment | ✅ | Independent diagnostic probe |
+| TLS handshake (HTTPS) | ✅ | Independent diagnostic probe with cert details |
+| HTTP request/response | ✅ | Real request with TTFB + download breakdown |
+| Time to First Byte (TTFB) | ✅ | Headers available timing |
+| Response download time | ✅ | Body receive timing |
+| Total observed request duration | ✅ | ttfbMs + downloadMs |
+| HTTP status code | ✅ | From response |
+| Resolved IP address | ✅ | From DNS probe |
+| HTTP protocol/version | ✅ | HTTP/1.1, HTTP/2 (see [limitations](#11-measurement-limitations) on HTTP/3) |
+| Response size tracking | ✅ | Actual bytes read + Content-Length header |
+| Redirect chain tracking | ✅ | Count + final URL capture |
+| Waterfall visualization | ✅ | Interactive, single-URL detail view |
+| **Multi-URL Comparison** | ✅ Complete | Compare 2–5 URLs |
+| Side-by-side mode | ✅ | Each URL waterfall separately |
+| Overlay mode | ✅ | Phase duration comparison on shared scale |
+| Normalized mode | ✅ | Phase contribution as percentage of total |
+| URL visibility toggle | ✅ | Show/hide URLs without re-request |
+| Phase detail panels | ✅ | Click phases for metadata (IPs, versions, certs, sizes) |
+| Keyboard accessibility | ✅ | Full navigation + ARIA labels |
 
-Stage 1 explicitly excludes persistence, authentication, multi-URL comparison, and historical tracking — those are later stages, not gaps in this one. See [Current Roadmap](#13-current-roadmap) for what's deliberately not here yet, including a few smaller Stage 1 polish items.
+Stage 1 explicitly excludes persistence, authentication, and historical tracking — those are later stages, not gaps in this one. See [Current Roadmap](#13-current-roadmap) for future enhancements.
 
 ## 3. Architecture
 
@@ -175,14 +185,31 @@ Errors share one consistent shape (`{timestamp, status, error, message}`), regar
 
 `error` is one of `VALIDATION_FAILED`, `INVALID_URL`, `BLOCKED_TARGET`, `DNS_FAILURE`, `CONNECTION_FAILURE`, `TIMEOUT`, `INVALID_RESPONSE`, or `ANALYSIS_FAILED` (an unexpected server-side error — `message` for that one is always a fixed generic string; the real exception is only logged server-side, never returned to the client).
 
-## 10. Screenshots
+## 10. Features in Action
 
-Not yet included in this repository. Placeholders for what belongs here once captured:
+### Single-URL Analysis
+- **The analyzer form** — enter a URL and click "Analyze" to start
+- **Waterfall visualization** — see DNS, TCP, TLS, TTFB, and Download phases with interactive bars
+- **Phase detail panels** — click any phase to see metadata:
+  - **DNS**: hostname, resolved IPs, resolution time
+  - **TCP**: destination IP/port, connection time
+  - **TLS**: TLS version, cipher suite, certificate subject/issuer, handshake time
+  - **HTTP**: status code, protocol version, TTFB, download time, response size
+- **Loading state** — see which URLs are being analyzed during comparison
+- **Error handling** — validation feedback for invalid URLs, blocked targets, timeouts, etc.
 
-- **The analyzer form** — empty state, with the placeholder and "Try https://example.com" link visible.
-- **A successful analysis** — the summary panel, waterfall visualization, and DNS/TCP/TLS/HTTP detail panels for a real HTTPS URL.
-- **The in-progress state** — the loading indicator shown while a request is running.
-- **An error state** — e.g. the validation feedback on an invalid URL, or a blocked-target response.
+### Multi-URL Comparison
+- **Side-by-side mode** (default) — each URL's waterfall on a shared time scale
+- **Overlay mode** — phase durations for all URLs on the same chart (labeled as "Phase Duration Comparison")
+- **Normalized mode** — each phase as a percentage of total HTTP time
+- **URL visibility toggle** — show/hide individual URLs without making a new request
+- **Interactive phase selection** — click any phase to see its detailed breakdown across all URLs
+
+Screenshots not yet captured. Placeholders for what belongs here:
+- **The analyzer form** — empty state and completed analysis views
+- **The comparison view** — switching between display modes
+- **The in-progress state** — the loading indicator shown during analysis
+- **An error state** — validation feedback and blocked-target responses
 
 ## 11. Measurement Limitations
 
@@ -207,18 +234,26 @@ Netrace's entire purpose is making a real, server-side request to a user-supplie
 
 ## 13. Current Roadmap
 
+**Stage 1 (Complete):**
+- ✅ Single-URL analysis with waterfall visualization
+- ✅ Multi-URL comparison (2–5 URLs) with three display modes
+- ✅ Interactive phase details with metadata
+- ✅ Keyboard accessibility and responsive design
+- ✅ Comprehensive waterfall documentation
+
 **Near-term (Stage 1 polish, not yet done):**
-- Real screenshots in place of the placeholders above.
-- A frontend automated test suite — none exists yet (no Vitest/Testing Library configured); frontend changes have so far been verified by manual browser testing against the real running backend.
+- Real screenshots in place of the placeholders in section 10 above.
+- A frontend automated test suite — test infrastructure exists but coverage is not yet comprehensive; frontend changes have been verified by manual browser testing and unit tests for core components.
 - Narrowing the DNS-rebinding window described above, and covering more of IANA's special-purpose address registry in the SSRF guard, if a concrete need shows up.
 
 **Beyond Stage 1 (explicitly out of scope for now):**
 - Persistence / history of past analyses.
 - Authentication.
-- Multi-URL comparison.
 - Historical trend tracking.
+- Resource waterfall (full-page asset timing).
+- Core Web Vitals integration.
 
-See [docs/measurement-phases.md](docs/measurement-phases.md) for how Stage 1's measurements were built up incrementally.
+See [docs/waterfall.md](docs/waterfall.md) for the complete waterfall visualization guide, including how to interpret the data and debugging tips. See [docs/measurement-phases.md](docs/measurement-phases.md) for how Stage 1's measurements were built up incrementally.
 
 ## Project Structure
 
