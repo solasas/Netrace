@@ -4,6 +4,7 @@ import com.netrace.backend.analyzer.AnalysisException;
 import com.netrace.backend.analyzer.DnsAnalyzer;
 import com.netrace.backend.analyzer.HttpAnalyzer;
 import com.netrace.backend.analyzer.TcpAnalyzer;
+import com.netrace.backend.analyzer.TlsAnalyzer;
 import com.netrace.backend.dto.CompareRequest;
 import com.netrace.backend.dto.CompareResponse;
 import com.netrace.backend.dto.CompareResult;
@@ -12,6 +13,8 @@ import com.netrace.backend.dto.DnsResult;
 import com.netrace.backend.dto.HttpResult;
 import com.netrace.backend.dto.PhaseResult;
 import com.netrace.backend.dto.TcpResult;
+import com.netrace.backend.dto.TlsMetadata;
+import com.netrace.backend.dto.TlsResult;
 import com.netrace.backend.validation.UrlValidator;
 import org.springframework.stereotype.Service;
 
@@ -49,6 +52,7 @@ public class ComparisonService {
     private final UrlValidator urlValidator;
     private final DnsAnalyzer dnsAnalyzer;
     private final TcpAnalyzer tcpAnalyzer;
+    private final TlsAnalyzer tlsAnalyzer;
     private final HttpAnalyzer httpAnalyzer;
     private final ExecutorService executor;
 
@@ -56,11 +60,13 @@ public class ComparisonService {
             UrlValidator urlValidator,
             DnsAnalyzer dnsAnalyzer,
             TcpAnalyzer tcpAnalyzer,
+            TlsAnalyzer tlsAnalyzer,
             HttpAnalyzer httpAnalyzer,
             ExecutorService comparisonExecutor) {
         this.urlValidator = urlValidator;
         this.dnsAnalyzer = dnsAnalyzer;
         this.tcpAnalyzer = tcpAnalyzer;
+        this.tlsAnalyzer = tlsAnalyzer;
         this.httpAnalyzer = httpAnalyzer;
         this.executor = comparisonExecutor;
     }
@@ -84,13 +90,14 @@ public class ComparisonService {
 
         DnsResult dns = null;
         TcpResult tcp = null;
+        TlsResult tls = null;
 
         // Run DNS - capture result even on failure so we can report it
         try {
             dns = runDns(url);
         } catch (AnalysisException e) {
-            // DNS failed; TCP and HTTP cannot proceed, so report this as final failure
-            return CompareResult.failureWithPartialResults(url, e.getMessage(), null, null);
+            // DNS failed; TCP/TLS/HTTP cannot proceed, so report this as final failure
+            return CompareResult.failureWithPartialResults(url, e.getMessage(), null, null, null);
         }
 
         // Run TCP on the resolved address - capture result even on failure
@@ -101,16 +108,26 @@ public class ComparisonService {
         } catch (IllegalArgumentException e) {
             // Invalid port: shouldn't happen since UrlValidator already checked,
             // but report it if it does
-            return CompareResult.failureWithPartialResults(url, "Invalid port: " + port, dns, null);
+            return CompareResult.failureWithPartialResults(url, "Invalid port: " + port, dns, null, null);
         }
 
-        // TCP succeeded or failed with a result; always attempt HTTP
+        // For HTTPS, run TLS on the resolved address - capture result even on failure
+        if (isHttps(url)) {
+            try {
+                tls = runTls(dns.hostname(), resolvedIp, port);
+            } catch (IllegalArgumentException e) {
+                // Invalid port; shouldn't happen but report if it does
+                return CompareResult.failureWithPartialResults(url, "Invalid port: " + port, dns, tcp, null);
+            }
+        }
+
+        // TCP/TLS succeeded or failed with results; always attempt HTTP
         try {
             HttpResult httpResult = httpAnalyzer.analyze(url);
-            return CompareResult.success(url, httpResult, dns, tcp);
+            return CompareResult.success(url, httpResult, dns, tcp, tls);
         } catch (AnalysisException e) {
-            // HTTP failed; return partial results with DNS/TCP info
-            return CompareResult.failureWithPartialResults(url, e.getMessage(), dns, tcp);
+            // HTTP failed; return partial results with DNS/TCP/TLS info
+            return CompareResult.failureWithPartialResults(url, e.getMessage(), dns, tcp, tls);
         }
     }
 
@@ -155,5 +172,27 @@ public class ComparisonService {
             return uri.getPort();
         }
         return "https".equalsIgnoreCase(uri.getScheme()) ? 443 : 80;
+    }
+
+    private TlsResult runTls(String hostname, String resolvedIp, int port) {
+        if (port < 0 || port > 65535) {
+            throw new IllegalArgumentException("Invalid destination port: " + port);
+        }
+        PhaseResult<TlsMetadata> tlsPhase = tlsAnalyzer.analyze(hostname, resolvedIp, port);
+        if (tlsPhase.status() == PhaseResult.Status.FAILURE) {
+            TlsMetadata metadata = tlsPhase.metadata();
+            return new TlsResult(null, null, null, null, tlsPhase.durationMs());
+        }
+        TlsMetadata metadata = tlsPhase.metadata();
+        return new TlsResult(
+                metadata.tlsVersion(),
+                metadata.cipherSuite(),
+                metadata.certificateSubject(),
+                metadata.certificateIssuer(),
+                tlsPhase.durationMs());
+    }
+
+    private static boolean isHttps(String url) {
+        return "https".equalsIgnoreCase(URI.create(url).getScheme());
     }
 }

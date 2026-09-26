@@ -51,6 +51,9 @@ class CompareEndpointIntegrationTest {
             assertThat(result.tcp().success()).isTrue();
             assertThat(result.tcp().durationMs()).isGreaterThanOrEqualTo(0);
             assertThat(result.tcp().port()).isEqualTo(443);
+
+            assertThat(result.tls()).isNotNull();
+            assertThat(result.tls().durationMs()).isGreaterThanOrEqualTo(0);
         });
     }
 
