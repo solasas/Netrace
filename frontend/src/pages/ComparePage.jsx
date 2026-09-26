@@ -2,6 +2,9 @@ import { useState } from 'react'
 import Button from '../components/Button'
 import ComparisonBarChart from '../components/ComparisonBarChart'
 import ComparisonTable from '../components/ComparisonTable'
+import ComparisonWaterfall from '../components/ComparisonWaterfall'
+import DnsComparisonChart from '../components/DnsComparisonChart'
+import TcpComparisonChart from '../components/TcpComparisonChart'
 import ErrorMessage from '../components/ErrorMessage'
 import TextInput from '../components/TextInput'
 import { AnalysisError } from '../services/analyzeService'
@@ -156,6 +159,9 @@ function ComparePage() {
       {status === STATUS.SUCCESS && results && (
         <>
           <ComparisonTable results={results} />
+          <ComparisonWaterfall results={results} />
+          <DnsComparisonChart results={results} />
+          <TcpComparisonChart results={results} />
           <ComparisonBarChart results={results} />
         </>
       )}

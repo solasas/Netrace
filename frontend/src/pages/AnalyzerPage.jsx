@@ -9,6 +9,7 @@ import TcpDetails from '../components/TcpDetails'
 import TextInput from '../components/TextInput'
 import TlsDetails from '../components/TlsDetails'
 import Waterfall from '../components/Waterfall'
+import { buildTimingPhases } from '../types/TimingPhase'
 import { AnalysisError, analyzeUrl } from '../services/analyzeService'
 import { friendlyHeadline } from '../utils/errorMessages'
 import { urlValidationMessage } from '../utils/urlValidation'
@@ -122,13 +123,7 @@ function AnalyzerPage() {
       {status === STATUS.SUCCESS && result && (
         <>
           <AnalysisSummary url={submittedUrl} result={result} />
-          <Waterfall
-            dnsMs={result.probes?.dns?.durationMs}
-            tcpMs={result.probes?.tcp?.durationMs}
-            tlsMs={result.probes?.tls?.durationMs ?? null}
-            ttfbMs={result.ttfbMs}
-            downloadMs={result.downloadMs}
-          />
+          <Waterfall phases={buildTimingPhases(result)} />
           <DnsDetails dns={result.probes?.dns} />
           {result.probes?.tcp && (
             <TcpDetails
