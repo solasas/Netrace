@@ -29,6 +29,7 @@ function ComparePage() {
   const [status, setStatus] = useState(STATUS.IDLE)
   const [results, setResults] = useState(null)
   const [error, setError] = useState(null)
+  const [completedUrls, setCompletedUrls] = useState([])
 
   const isLoading = status === STATUS.LOADING
   const trimmedInput = urlInput.trim()
@@ -141,14 +142,33 @@ function ComparePage() {
         )}
       </div>
 
+      {status === STATUS.IDLE && urls.length === 0 && (
+        <section className="flex flex-col items-center gap-4 rounded-md border border-slate-200 border-dashed bg-slate-50 p-12 text-center">
+          <div className="text-sm text-slate-600">
+            <h2 className="text-base font-semibold text-slate-900 mb-2">Compare Network Performance</h2>
+            <p>Add 2–5 URLs to begin analyzing their observed request timing.</p>
+          </div>
+        </section>
+      )}
+
       {status === STATUS.LOADING && (
-        <section className="flex items-center gap-3 rounded-md border border-slate-200 bg-white p-6 text-sm text-slate-600">
-          <span
-            className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-slate-300 border-t-indigo-600"
-            role="status"
-            aria-label="Comparing"
-          />
-          <span>Comparing {urls.length} URLs — each runs a real HTTP request.</span>
+        <section className="flex flex-col gap-3 rounded-md border border-slate-200 bg-white p-6">
+          <div className="flex items-center gap-3 text-sm text-slate-600">
+            <span
+              className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-slate-300 border-t-indigo-600"
+              role="status"
+              aria-label="Comparing"
+            />
+            <span>Analyzing {urls.length} URLs — each runs a real HTTP request.</span>
+          </div>
+          <div className="flex flex-col gap-2 text-xs">
+            {urls.map((url) => (
+              <div key={url} className="flex items-center gap-2 text-slate-600">
+                <span className="text-indigo-600">⟳</span>
+                <span className="truncate">{url}</span>
+              </div>
+            ))}
+          </div>
         </section>
       )}
 

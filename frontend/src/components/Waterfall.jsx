@@ -1,16 +1,7 @@
 import { useState } from 'react'
-import { PHASE_NAMES, PHASE_STATUS, PHASE_DESCRIPTIONS } from '../types/TimingPhase'
+import { PHASE_NAMES, PHASE_STATUS, PHASE_DESCRIPTIONS, PHASE_COLORS } from '../types/TimingPhase'
 
 const MIN_BAR_PERCENT = 2
-
-// Color mapping for phases
-const PHASE_COLORS = {
-  [PHASE_NAMES.DNS]: 'bg-indigo-400',
-  [PHASE_NAMES.TCP]: 'bg-indigo-500',
-  [PHASE_NAMES.TLS]: 'bg-indigo-600',
-  [PHASE_NAMES.TTFB]: 'bg-emerald-500',
-  [PHASE_NAMES.DOWNLOAD]: 'bg-emerald-700',
-}
 
 function percentOf(durationMs, maxDurationMs) {
   return maxDurationMs > 0 ? Math.max((durationMs / maxDurationMs) * 100, MIN_BAR_PERCENT) : 0

@@ -106,6 +106,37 @@ export const PHASE_DESCRIPTIONS = {
 }
 
 /**
+ * Visual styling for phases — consistent across all visualizations.
+ * Uses a professional developer-tool color palette.
+ */
+export const PHASE_COLORS = {
+  DNS: 'bg-indigo-400',
+  TCP: 'bg-indigo-500',
+  TLS: 'bg-indigo-600',
+  TTFB: 'bg-emerald-500',
+  DOWNLOAD: 'bg-emerald-700',
+}
+
+/**
+ * Tailwind color classes for text/border variants of phase colors.
+ */
+export const PHASE_TEXT_COLORS = {
+  DNS: 'text-indigo-600',
+  TCP: 'text-indigo-700',
+  TLS: 'text-indigo-800',
+  TTFB: 'text-emerald-600',
+  DOWNLOAD: 'text-emerald-700',
+}
+
+export const PHASE_BORDER_COLORS = {
+  DNS: 'border-indigo-300',
+  TCP: 'border-indigo-400',
+  TLS: 'border-indigo-500',
+  TTFB: 'border-emerald-400',
+  DOWNLOAD: 'border-emerald-500',
+}
+
+/**
  * Creates a measured phase.
  *
  * @param {string} phase - Phase name from PHASE_NAMES
