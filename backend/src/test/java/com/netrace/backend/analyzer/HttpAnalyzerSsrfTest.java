@@ -44,7 +44,7 @@ class HttpAnalyzerSsrfTest {
         // this must be refused before any connection is attempted.
         HttpAnalyzer analyzer = realAnalyzer();
 
-        assertThatThrownBy(() -> analyzer.analyze("http://127.0.0.1:1/"))
+        assertThatThrownBy(() -> analyzer.analyze("http://127.0.0.1/"))
                 .isInstanceOf(AnalysisException.class)
                 .extracting(e -> ((AnalysisException) e).reason())
                 .isEqualTo(AnalysisException.Reason.BLOCKED_TARGET);
@@ -86,7 +86,7 @@ class HttpAnalyzerSsrfTest {
         AtomicInteger validationCalls = new AtomicInteger();
         HttpAnalyzer analyzer = new HttpAnalyzer(neverRedirectingClient(),
                 new AnalyzerProperties(Duration.ofSeconds(2), Duration.ofSeconds(2)),
-                address -> validationCalls.getAndIncrement() > 0);
+                address -> validationCalls.getAndIncrement() > 0, (scheme, p) -> true);
 
         assertThatThrownBy(() -> analyzer.analyze("http://localhost:" + port + "/redirect"))
                 .isInstanceOf(AnalysisException.class)
@@ -110,7 +110,36 @@ class HttpAnalyzerSsrfTest {
 
         HttpAnalyzer analyzer = new HttpAnalyzer(neverRedirectingClient(),
                 new AnalyzerProperties(Duration.ofSeconds(2), Duration.ofSeconds(2)),
-                address -> false);
+                address -> false, (scheme, port) -> true);
+
+        assertThatThrownBy(() -> analyzer.analyze(url))
+                .isInstanceOf(AnalysisException.class)
+                .extracting(e -> ((AnalysisException) e).reason())
+                .isEqualTo(AnalysisException.Reason.BLOCKED_TARGET);
+    }
+
+    @Test
+    void blocksARedirectToANonStandardPort() throws IOException {
+        // Proves the gap a redirect could otherwise use to bypass port
+        // restriction: the initial URL here uses the server's real
+        // (non-standard, OS-assigned) port, allowed through via a
+        // permissive port guard, exactly like the other redirect tests
+        // above - but the redirect target names a fixed, different,
+        // very much non-standard port (6379, a real service's default
+        // port), which a strict port guard must still reject on that
+        // second, separate validation call.
+        server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
+        server.createContext("/redirect", exchange -> {
+            exchange.getResponseHeaders().add("Location", "http://localhost:6379/");
+            exchange.sendResponseHeaders(302, -1);
+            exchange.close();
+        });
+        server.start();
+        String url = "http://localhost:" + server.getAddress().getPort() + "/redirect";
+
+        HttpAnalyzer analyzer = new HttpAnalyzer(neverRedirectingClient(),
+                new AnalyzerProperties(Duration.ofSeconds(2), Duration.ofSeconds(2)),
+                address -> false, (scheme, port) -> port == server.getAddress().getPort());
 
         assertThatThrownBy(() -> analyzer.analyze(url))
                 .isInstanceOf(AnalysisException.class)
@@ -131,7 +160,7 @@ class HttpAnalyzerSsrfTest {
 
         HttpAnalyzer analyzer = new HttpAnalyzer(neverRedirectingClient(),
                 new AnalyzerProperties(Duration.ofSeconds(2), Duration.ofSeconds(2), DataSize.ofMegabytes(10), 2, false),
-                address -> false);
+                address -> false, (scheme, p) -> true);
 
         assertThatThrownBy(() -> analyzer.analyze("http://localhost:" + port + "/loop"))
                 .isInstanceOf(AnalysisException.class)

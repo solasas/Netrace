@@ -6,6 +6,8 @@ import org.junit.jupiter.api.Test;
 
 import java.net.InetAddress;
 import java.net.UnknownHostException;
+import java.util.List;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -16,6 +18,10 @@ class DnsAnalyzerTest {
 
     private final DnsAnalyzer analyzer = new DnsAnalyzer();
 
+    private static List<String> allResolvedIps(DnsMetadata metadata) {
+        return Stream.concat(metadata.resolvedIpv4().stream(), metadata.resolvedIpv6().stream()).toList();
+    }
+
     @Test
     void resolvesLocalhostToALoopbackAddress() throws UnknownHostException {
         PhaseResult<DnsMetadata> result = analyzer.analyze("http://localhost:8080/");
@@ -23,8 +29,9 @@ class DnsAnalyzerTest {
         assertThat(result.phase()).isEqualTo("DNS");
         assertThat(result.status()).isEqualTo(PhaseResult.Status.SUCCESS);
         assertThat(result.metadata().hostname()).isEqualTo("localhost");
-        assertThat(result.metadata().resolvedIps()).isNotEmpty();
-        for (String ip : result.metadata().resolvedIps()) {
+        List<String> allIps = allResolvedIps(result.metadata());
+        assertThat(allIps).isNotEmpty();
+        for (String ip : allIps) {
             assertThat(InetAddress.getByName(ip).isLoopbackAddress()).isTrue();
         }
         assertThat(result.durationMs()).isGreaterThanOrEqualTo(0);
@@ -42,7 +49,7 @@ class DnsAnalyzerTest {
         PhaseResult<DnsMetadata> result = analyzer.analyze("https://example.com");
 
         assertThat(result.metadata().hostname()).isEqualTo("example.com");
-        assertThat(result.metadata().resolvedIps()).isNotEmpty();
+        assertThat(allResolvedIps(result.metadata())).isNotEmpty();
         assertThat(result.durationMs()).isGreaterThanOrEqualTo(0);
     }
 
@@ -51,7 +58,8 @@ class DnsAnalyzerTest {
         PhaseResult<DnsMetadata> result = analyzer.analyze("http://127.0.0.1:8080/");
 
         assertThat(result.metadata().hostname()).isEqualTo("127.0.0.1");
-        assertThat(result.metadata().resolvedIps()).containsExactly("127.0.0.1");
+        assertThat(result.metadata().resolvedIpv4()).containsExactly("127.0.0.1");
+        assertThat(result.metadata().resolvedIpv6()).isEmpty();
     }
 
     @Test
@@ -66,14 +74,15 @@ class DnsAnalyzerTest {
 
         PhaseResult<DnsMetadata> result = analyzer.analyze("http://[::1]:8080/");
 
-        assertThat(result.metadata().resolvedIps()).isNotEmpty();
-        for (String ip : result.metadata().resolvedIps()) {
+        assertThat(result.metadata().resolvedIpv6()).isNotEmpty();
+        assertThat(result.metadata().resolvedIpv4()).isEmpty();
+        for (String ip : result.metadata().resolvedIpv6()) {
             assertThat(InetAddress.getByName(ip).isLoopbackAddress()).isTrue();
         }
     }
 
     @Test
-    void returnsAllAddressesWhenMultipleAreResolved() throws UnknownHostException {
+    void splitsResolvedAddressesByFamilyWhenMultipleAreResolved() throws UnknownHostException {
         DnsAnalyzer multiAddressAnalyzer = new DnsAnalyzer(hostname -> new InetAddress[]{
                 InetAddress.getByName("203.0.113.1"),
                 InetAddress.getByName("203.0.113.2"),
@@ -82,8 +91,8 @@ class DnsAnalyzerTest {
 
         PhaseResult<DnsMetadata> result = multiAddressAnalyzer.analyze("https://multi.example/");
 
-        assertThat(result.metadata().resolvedIps())
-                .containsExactly("203.0.113.1", "203.0.113.2", "2001:db8:0:0:0:0:0:1");
+        assertThat(result.metadata().resolvedIpv4()).containsExactly("203.0.113.1", "203.0.113.2");
+        assertThat(result.metadata().resolvedIpv6()).containsExactly("2001:db8:0:0:0:0:0:1");
     }
 
     @Test

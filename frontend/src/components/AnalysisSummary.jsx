@@ -1,7 +1,8 @@
 import SummaryField from './SummaryField'
 
 function AnalysisSummary({ url, result }) {
-  const resolvedIp = result.probes?.dns?.resolvedIps?.[0] ?? '—'
+  const dns = result.probes?.dns
+  const resolvedIp = dns?.resolvedIpv4?.[0] ?? dns?.resolvedIpv6?.[0] ?? '—'
 
   return (
     <section className="flex flex-col gap-4 rounded-md border border-slate-200 bg-white p-6">

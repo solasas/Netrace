@@ -34,7 +34,7 @@ class AnalyzeControllerTest {
 
     @Test
     void returnsOkWithTheAnalysisResultOnSuccess() throws Exception {
-        DnsResult dns = new DnsResult("example.com", List.of("93.184.216.34"), 12L);
+        DnsResult dns = new DnsResult("example.com", List.of("93.184.216.34"), List.of(), 12L, true);
         TcpResult tcp = new TcpResult("93.184.216.34", 443, 8L);
         TlsResult tls = new TlsResult("TLSv1.3", "TLS_AES_128_GCM_SHA256", "CN=example.com", "CN=Test CA", 20L);
         Probes probes = new Probes(dns, tcp, tls);
@@ -48,8 +48,10 @@ class AnalyzeControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.url").value("https://example.com"))
                 .andExpect(jsonPath("$.probes.dns.hostname").value("example.com"))
-                .andExpect(jsonPath("$.probes.dns.resolvedIps[0]").value("93.184.216.34"))
+                .andExpect(jsonPath("$.probes.dns.resolvedIpv4[0]").value("93.184.216.34"))
+                .andExpect(jsonPath("$.probes.dns.resolvedIpv6").isEmpty())
                 .andExpect(jsonPath("$.probes.dns.durationMs").value(12))
+                .andExpect(jsonPath("$.probes.dns.success").value(true))
                 .andExpect(jsonPath("$.probes.tcp.host").value("93.184.216.34"))
                 .andExpect(jsonPath("$.probes.tcp.port").value(443))
                 .andExpect(jsonPath("$.probes.tcp.durationMs").value(8))
@@ -70,7 +72,7 @@ class AnalyzeControllerTest {
 
     @Test
     void returnsNullTlsAndHttp1_1ProtocolForAnHttpUrl() throws Exception {
-        DnsResult dns = new DnsResult("example.com", List.of("93.184.216.34"), 12L);
+        DnsResult dns = new DnsResult("example.com", List.of("93.184.216.34"), List.of(), 12L, true);
         TcpResult tcp = new TcpResult("93.184.216.34", 80, 8L);
         Probes probes = new Probes(dns, tcp, null);
         when(analysisService.analyze(any())).thenReturn(

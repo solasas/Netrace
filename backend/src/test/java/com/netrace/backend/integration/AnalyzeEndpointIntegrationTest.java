@@ -3,8 +3,6 @@ package com.netrace.backend.integration;
 import com.netrace.backend.dto.AnalyzeRequest;
 import com.netrace.backend.dto.AnalyzeResponse;
 import com.netrace.backend.dto.ErrorResponse;
-import com.sun.net.httpserver.HttpServer;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.resttestclient.TestRestTemplate;
@@ -12,9 +10,6 @@ import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureTestRe
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-
-import java.io.IOException;
-import java.net.InetSocketAddress;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -43,15 +38,6 @@ class AnalyzeEndpointIntegrationTest {
     @Autowired
     private TestRestTemplate restTemplate;
 
-    private HttpServer localServer;
-
-    @AfterEach
-    void stopLocalServer() {
-        if (localServer != null) {
-            localServer.stop(0);
-        }
-    }
-
     @Test
     void analyzesARealHttpsUrlSuccessfully() {
         ResponseEntity<AnalyzeResponse> response = restTemplate.postForEntity(
@@ -68,11 +54,15 @@ class AnalyzeEndpointIntegrationTest {
                 .isEqualTo(response.getBody().totalTimeMs());
         assertThat(response.getBody().probes().dns()).isNotNull();
         assertThat(response.getBody().probes().dns().hostname()).isEqualTo("example.com");
-        assertThat(response.getBody().probes().dns().resolvedIps()).isNotEmpty();
+        // example.com is dual-stack (verified real, stable behavior), so
+        // both families should be non-empty here.
+        assertThat(response.getBody().probes().dns().resolvedIpv4()).isNotEmpty();
+        assertThat(response.getBody().probes().dns().resolvedIpv6()).isNotEmpty();
         assertThat(response.getBody().probes().dns().durationMs()).isGreaterThanOrEqualTo(0);
+        assertThat(response.getBody().probes().dns().success()).isTrue();
         assertThat(response.getBody().probes().tcp()).isNotNull();
         assertThat(response.getBody().probes().tcp().host())
-                .isEqualTo(response.getBody().probes().dns().resolvedIps().get(0));
+                .isEqualTo(response.getBody().probes().dns().resolvedIpv4().get(0));
         assertThat(response.getBody().probes().tcp().port()).isEqualTo(443);
         assertThat(response.getBody().probes().tcp().durationMs()).isGreaterThanOrEqualTo(0);
         assertThat(response.getBody().probes().tls()).isNotNull();
@@ -108,26 +98,35 @@ class AnalyzeEndpointIntegrationTest {
     }
 
     @Test
-    void blocksALocalHttpUrlAsAnSsrfTarget() throws IOException {
+    void blocksALocalHttpUrlAsAnSsrfTarget() {
         // Proves the SSRF guard is wired all the way through the real
-        // stack, not just at the unit level: the local server below is
-        // never actually reached, because localhost resolves to a
-        // loopback address the default-configured guard refuses before
-        // any TCP connection is attempted. See docs/security.md.
-        localServer = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
-        localServer.createContext("/ok", exchange -> {
-            exchange.sendResponseHeaders(200, -1);
-            exchange.close();
-        });
-        localServer.start();
-        String url = "http://localhost:" + localServer.getAddress().getPort() + "/ok";
-
+        // stack, not just at the unit level. No real server is needed
+        // (or even possible to use meaningfully here): "localhost" with
+        // no explicit port passes URL validation - port 80 is this
+        // scheme's own standard port - and is refused because it
+        // resolves to a loopback address, before any TCP connection is
+        // attempted. See docs/security.md.
         ResponseEntity<ErrorResponse> response = restTemplate.postForEntity(
-                "/api/analyze", new AnalyzeRequest(url), ErrorResponse.class);
+                "/api/analyze", new AnalyzeRequest("http://localhost/"), ErrorResponse.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
         assertThat(response.getBody()).isNotNull();
         assertThat(response.getBody().error()).isEqualTo("BLOCKED_TARGET");
+    }
+
+    @Test
+    void rejectsAUrlWithANonStandardPort() {
+        // A public-looking host with an arbitrary explicit port must be
+        // rejected before any network activity, not silently
+        // reinterpreted - otherwise this endpoint could be used to
+        // probe whether an arbitrary port is open on any public host.
+        // See docs/security.md.
+        ResponseEntity<ErrorResponse> response = restTemplate.postForEntity(
+                "/api/analyze", new AnalyzeRequest("https://example.com:8443/"), ErrorResponse.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().error()).isEqualTo("INVALID_URL");
     }
 
     @Test

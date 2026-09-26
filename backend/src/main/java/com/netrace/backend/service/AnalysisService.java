@@ -26,6 +26,7 @@ import org.springframework.stereotype.Service;
 import java.net.InetAddress;
 import java.net.URI;
 import java.net.UnknownHostException;
+import java.util.List;
 
 /**
  * Coordinates a single analysis end to end as a fixed sequence of
@@ -102,7 +103,7 @@ public class AnalysisService {
         // Connect to a specific resolved address, the same one a client
         // would actually reach - not the hostname again, which would let
         // TCP silently redo DNS resolution.
-        String resolvedIp = dns.resolvedIps().get(0);
+        String resolvedIp = firstResolvedIp(dns);
         int port = portOf(url);
 
         TcpResult tcp = runTcp(url, resolvedIp, port);
@@ -121,26 +122,43 @@ public class AnalysisService {
     private DnsResult runDns(String url) {
         PhaseResult<DnsMetadata> dnsPhase = dnsAnalyzer.analyze(url);
         DnsMetadata metadata = dnsPhase.metadata();
-        for (String ip : metadata.resolvedIps()) {
+        rejectIfAnyBlocked(metadata.hostname(), metadata.resolvedIpv4());
+        rejectIfAnyBlocked(metadata.hostname(), metadata.resolvedIpv6());
+        return new DnsResult(
+                metadata.hostname(), metadata.resolvedIpv4(), metadata.resolvedIpv6(), dnsPhase.durationMs(), true);
+    }
+
+    private void rejectIfAnyBlocked(String hostname, List<String> ips) {
+        for (String ip : ips) {
             if (!allowPrivateTargets && SsrfGuard.isBlocked(parseLiteralIp(ip))) {
                 throw new AnalysisException(AnalysisException.Reason.BLOCKED_TARGET,
-                        "Refusing to analyze " + metadata.hostname()
+                        "Refusing to analyze " + hostname
                                 + ": resolves to a private or reserved address (" + ip + ")", null);
             }
         }
-        return new DnsResult(metadata.hostname(), metadata.resolvedIps(), dnsPhase.durationMs());
     }
 
-    // resolvedIps entries are always the literal getHostAddress() form
-    // of an address DnsAnalyzer already resolved, so re-parsing them
-    // here is a local, non-blocking string parse - never a second DNS
-    // lookup.
+    // resolvedIpv4/resolvedIpv6 entries are always the literal
+    // getHostAddress() form of an address DnsAnalyzer already
+    // resolved, so re-parsing them here is a local, non-blocking
+    // string parse - never a second DNS lookup.
     private static InetAddress parseLiteralIp(String ip) {
         try {
             return InetAddress.getByName(ip);
         } catch (UnknownHostException e) {
             throw new IllegalStateException("Not a literal IP address: " + ip, e);
         }
+    }
+
+    // Prefers IPv4 when both families are available. DnsAnalyzer
+    // guarantees at least one address across the two lists (it throws
+    // DNS_FAILURE rather than ever returning both empty), so exactly
+    // one of these two lookups always succeeds.
+    private static String firstResolvedIp(DnsResult dns) {
+        if (!dns.resolvedIpv4().isEmpty()) {
+            return dns.resolvedIpv4().get(0);
+        }
+        return dns.resolvedIpv6().get(0);
     }
 
     private TcpResult runTcp(String url, String resolvedIp, int port) {

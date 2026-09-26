@@ -1,7 +1,22 @@
 import SummaryField from './SummaryField'
 
-function classifyIp(ip) {
-  return ip.includes(':') ? 'IPv6' : 'IPv4'
+function AddressList({ label, addresses }) {
+  return (
+    <div>
+      <dt className="text-xs uppercase tracking-wide text-slate-500">{label}</dt>
+      {addresses.length === 0 ? (
+        <p className="mt-1 text-sm text-slate-500">None.</p>
+      ) : (
+        <ul className="mt-1 flex flex-col gap-0.5">
+          {addresses.map((ip) => (
+            <li key={ip} className="text-base font-medium text-slate-900">
+              {ip}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
 }
 
 function DnsDetails({ dns, error }) {
@@ -21,7 +36,8 @@ function DnsDetails({ dns, error }) {
     )
   }
 
-  const resolvedIps = dns.resolvedIps ?? []
+  const resolvedIpv4 = dns.resolvedIpv4 ?? []
+  const resolvedIpv6 = dns.resolvedIpv6 ?? []
 
   return (
     <section className="flex flex-col gap-4 rounded-md border border-slate-200 bg-white p-6">
@@ -29,26 +45,19 @@ function DnsDetails({ dns, error }) {
 
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
         <SummaryField label="Hostname" value={dns.hostname} />
-        <SummaryField label="DNS duration" value={`${dns.durationMs} ms`} />
+        <SummaryField label="Observed resolution" value={`${dns.durationMs} ms`} />
+        <SummaryField label="Resolution status" value={dns.success ? 'Success' : 'Failed'} />
       </div>
 
-      <div>
-        <dt className="text-xs uppercase tracking-wide text-slate-500">Resolved IP addresses</dt>
-        {resolvedIps.length === 0 ? (
-          <p className="mt-1 text-sm text-slate-500">No addresses resolved.</p>
-        ) : (
-          <ul className="mt-2 flex flex-col gap-1">
-            {resolvedIps.map((ip) => (
-              <li key={ip} className="flex items-center gap-2 text-base font-medium text-slate-900">
-                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">
-                  {classifyIp(ip)}
-                </span>
-                {ip}
-              </li>
-            ))}
-          </ul>
-        )}
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+        <AddressList label="IPv4" addresses={resolvedIpv4} />
+        <AddressList label="IPv6" addresses={resolvedIpv6} />
       </div>
+
+      <p className="text-xs text-slate-500">
+        This duration can reflect a cached result rather than a fresh query - see
+        docs/measurement.md for why.
+      </p>
     </section>
   )
 }

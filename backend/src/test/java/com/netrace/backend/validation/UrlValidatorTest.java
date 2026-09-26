@@ -15,13 +15,38 @@ class UrlValidatorTest {
             "http://example.com",
             "https://example.com",
             "HTTPS://example.com",
-            "http://example.com:8080/path?query=1#fragment",
+            "http://example.com/path?query=1#fragment",
             "https://sub.example.co.uk/path/to/resource",
             "http://192.168.1.1",
-            "http://[::1]:8080/"
+            "http://[::1]/",
+            // An explicit port is accepted only when it matches the
+            // scheme's own standard port - equivalent to not specifying
+            // one at all, never a different, arbitrary destination.
+            "http://example.com:80/",
+            "https://example.com:443/"
     })
     void acceptsValidHttpAndHttpsUrls(String url) {
         assertThat(validator.isValid(url)).isTrue();
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            // This project makes a real outbound TCP connection to
+            // whatever port a URL names - accepting an arbitrary
+            // explicit port here would let Netrace be used as a
+            // generic TCP port prober against any host, not just an
+            // HTTP(S) server on its standard port. See docs/security.md.
+            "http://example.com:8080/",
+            "https://example.com:8443/",
+            "http://example.com:22/",
+            // Right scheme, but the *other* scheme's standard port -
+            // still not this scheme's own standard port, so still
+            // rejected.
+            "http://example.com:443/",
+            "https://example.com:80/"
+    })
+    void rejectsAnExplicitNonStandardPort(String url) {
+        assertThat(validator.isValid(url)).isFalse();
     }
 
     @ParameterizedTest

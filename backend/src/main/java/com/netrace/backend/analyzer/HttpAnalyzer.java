@@ -113,19 +113,38 @@ public class HttpAnalyzer {
         boolean isBlocked(InetAddress address);
     }
 
+    /**
+     * Isolates "is this port allowed for this scheme" the same way
+     * TargetGuard isolates the address check - a real local HttpServer
+     * is bound to an OS-assigned port, never 80/443, so tests need a
+     * permissive guard here too. Production always uses
+     * isStandardPort, via the public constructor, unless
+     * allowPrivateTargets is set (see the class Javadoc on why that
+     * one property gates both - the two are always relaxed together in
+     * practice, for the same "controlled testing/internal context"
+     * reason).
+     */
+    @FunctionalInterface
+    interface PortGuard {
+        boolean isAllowed(String scheme, int port);
+    }
+
     private final HttpClient httpClient;
     private final Duration requestTimeout;
     private final long maxResponseBytes;
     private final int maxRedirects;
     private final TargetGuard targetGuard;
+    private final PortGuard portGuard;
 
     @Autowired
     public HttpAnalyzer(HttpClient httpClient, AnalyzerProperties analyzerProperties) {
         this(httpClient, analyzerProperties,
-                analyzerProperties.allowPrivateTargets() ? address -> false : SsrfGuard::isBlocked);
+                analyzerProperties.allowPrivateTargets() ? address -> false : SsrfGuard::isBlocked,
+                analyzerProperties.allowPrivateTargets() ? (scheme, port) -> true : HttpAnalyzer::isStandardPort);
     }
 
-    HttpAnalyzer(HttpClient httpClient, AnalyzerProperties analyzerProperties, TargetGuard targetGuard) {
+    HttpAnalyzer(HttpClient httpClient, AnalyzerProperties analyzerProperties, TargetGuard targetGuard,
+            PortGuard portGuard) {
         long maxResponseBytes = analyzerProperties.maxResponseSize().toBytes();
         if (maxResponseBytes <= 0) {
             throw new IllegalStateException(
@@ -142,6 +161,12 @@ public class HttpAnalyzer {
         this.maxResponseBytes = maxResponseBytes;
         this.maxRedirects = maxRedirects;
         this.targetGuard = targetGuard;
+        this.portGuard = portGuard;
+    }
+
+    private static boolean isStandardPort(String scheme, int port) {
+        int standardPort = "https".equalsIgnoreCase(scheme) ? 443 : 80;
+        return port == -1 || port == standardPort;
     }
 
     public HttpResult analyze(String url) {
@@ -185,14 +210,20 @@ public class HttpAnalyzer {
 
     /**
      * Resolves the host of urlString and rejects it if the scheme
-     * isn't http(s) or if SsrfGuard blocks any resolved address. Run
+     * isn't http(s), if the port isn't that scheme's own standard port
+     * (80/443), or if SsrfGuard blocks any resolved address. Run
      * before every hop - the original URL and every redirect target -
-     * so a redirect can never reach an address this analyzer would
-     * have refused to connect to directly. This is a fresh resolution
-     * separate from the one httpClient.send() performs moments later
-     * for the same hostname; see docs/security.md for why that gap
-     * (a narrow DNS-rebinding window) is disclosed rather than fully
-     * closed.
+     * so a redirect can never reach an address, scheme, or port this
+     * analyzer would have refused to connect to directly. UrlValidator
+     * already enforces the same port rule for the original URL, but a
+     * redirect target never passes through UrlValidator, so it has to
+     * be re-checked here too - otherwise a redirect to an arbitrary
+     * port on an otherwise-public host would turn this analyzer into a
+     * generic TCP port prober (see docs/security.md). This is a fresh
+     * resolution separate from the one httpClient.send() performs
+     * moments later for the same hostname; see docs/security.md for
+     * why that gap (a narrow DNS-rebinding window) is disclosed rather
+     * than fully closed.
      */
     private void validateTargetIsAllowed(String urlString) {
         URI uri = URI.create(urlString);
@@ -200,6 +231,10 @@ public class HttpAnalyzer {
         if (scheme == null || !("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme))) {
             throw new AnalysisException(AnalysisException.Reason.BLOCKED_TARGET,
                     "Refusing to follow a redirect to an unsupported scheme: " + urlString, null);
+        }
+        if (!portGuard.isAllowed(scheme, uri.getPort())) {
+            throw new AnalysisException(AnalysisException.Reason.BLOCKED_TARGET,
+                    "Refusing to follow a redirect to a non-standard port: " + urlString, null);
         }
 
         InetAddress[] addresses;

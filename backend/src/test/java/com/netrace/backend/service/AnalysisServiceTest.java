@@ -55,8 +55,8 @@ class AnalysisServiceTest {
     @Mock
     private HttpAnalyzer httpAnalyzer;
 
-    private static PhaseResult<DnsMetadata> dnsSuccess(String hostname, String ip) {
-        return PhaseResult.success("DNS", 12L, new DnsMetadata(hostname, List.of(ip)));
+    private static PhaseResult<DnsMetadata> dnsSuccess(String hostname, String ipv4) {
+        return PhaseResult.success("DNS", 12L, new DnsMetadata(hostname, List.of(ipv4), List.of()));
     }
 
     private static PhaseResult<TcpMetadata> tcpSuccess(String ip, int port) {
@@ -91,7 +91,7 @@ class AnalysisServiceTest {
 
         AnalyzeResponse actual = service().analyze(new AnalyzeRequest(url));
 
-        DnsResult expectedDns = new DnsResult("example.com", List.of("93.184.216.34"), 12L);
+        DnsResult expectedDns = new DnsResult("example.com", List.of("93.184.216.34"), List.of(), 12L, true);
         TcpResult expectedTcp = new TcpResult("93.184.216.34", 443, 8L);
         TlsResult expectedTls =
                 new TlsResult("TLSv1.3", "TLS_AES_128_GCM_SHA256", "CN=example.com", "CN=Test CA", 20L);
@@ -202,7 +202,8 @@ class AnalysisServiceTest {
 
         AnalyzeResponse actual = service(true).analyze(new AnalyzeRequest(url));
 
-        assertThat(actual.probes().dns().resolvedIps()).containsExactly("10.0.0.5");
+        assertThat(actual.probes().dns().resolvedIpv4()).containsExactly("10.0.0.5");
+        assertThat(actual.probes().dns().success()).isTrue();
     }
 
     @ParameterizedTest

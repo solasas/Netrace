@@ -56,9 +56,18 @@ This was the most important gap found during this review. `HttpClient` was previ
 
 Fixed by configuring the shared `HttpClient` with `Redirect.NEVER` (`HttpClientConfig`) and having `HttpAnalyzer` follow redirects itself, one hop at a time: on every 3xx response, it resolves and validates the `Location` target through the same `SsrfGuard`-backed check as the original URL before ever connecting to it, and rejects any redirect to a non-`http(s)` scheme outright (closing a related trick: redirecting to `file://`, `gopher://`, etc.). The hop count is capped at `netrace.analyzer.max-redirects` (default 5); exceeding it fails with `INVALID_RESPONSE` rather than looping indefinitely.
 
+### Destination port restriction
+
+`SsrfGuard` only classifies *addresses* - it says nothing about which *port* on an otherwise-allowed public host this project connects to. Without a separate check, `https://some-public-host.com:22/` would pass every address-based rule (the host is genuinely public) and this analyzer would still make a real TCP connection to port 22 on it - turning Netrace into a generic TCP port prober against any public host, not just an HTTP(S) server on its standard port. This was found and closed during Cycle 4's port-scanning review (Phase 13).
+
+Both entry points restrict the destination port to exactly the requesting scheme's own standard port (`80` for `http`, `443` for `https`) - an explicit port is accepted only when it equals that standard port, never a different one:
+
+- **`UrlValidator`** rejects the initial URL outright (`INVALID_URL`, `400`) if its explicit port doesn't match its scheme's standard port.
+- **`HttpAnalyzer`** independently re-checks the same rule on every redirect hop (`BLOCKED_TARGET`), since a redirect target never passes through `UrlValidator` - the same "revalidate every hop, not just the first URL" principle already applied to the address and scheme checks above. Without this, a redirect would have been a working bypass for the restriction above.
+
 ### Off-by-default escape hatch
 
-`netrace.analyzer.allow-private-targets` (default `false`) disables the guard entirely when explicitly set `true`. This exists for a genuinely legitimate case - a controlled internal deployment that deliberately wants to analyze targets on its own private network - and is reused by this project's own test suite to reach real local servers for scenarios (timeouts, connection-refused) that can't be reproduced reliably against real public hosts. **It is a full bypass, not scoped to specific hosts or callers.** Never set it true on any deployment reachable from an untrusted network.
+`netrace.analyzer.allow-private-targets` (default `false`) disables both the address guard *and* the port restriction when explicitly set `true`. This exists for a genuinely legitimate case - a controlled internal deployment that deliberately wants to analyze targets on its own private network, on whatever port they run on - and is reused by this project's own test suite to reach real local servers (always both a private address and a non-standard, OS-assigned port) for scenarios (timeouts, connection-refused) that can't be reproduced reliably against real public hosts. **It is a full bypass, not scoped to specific hosts, ports, or callers.** Never set it true on any deployment reachable from an untrusted network.
 
 ## What this does *not* fully close
 
@@ -73,6 +82,7 @@ Documented deliberately, not silently:
 ## Testing
 
 - `SsrfGuardTest` - every blocked category from the table above, real public addresses just outside each range (to catch off-by-one boundary errors), and the alternate-representation findings above.
-- `HttpAnalyzerSsrfTest` - end-to-end through `HttpAnalyzer`: a direct request to loopback and to the cloud metadata address blocked by the real (production) guard with no server needed; a redirect target rejected even when the initial hop passed (proving per-hop revalidation, not just an initial check); a redirect to a non-`http(s)` scheme rejected; exceeding `max-redirects` failing cleanly; `allow-private-targets=true` bypassing the guard as designed.
+- `HttpAnalyzerSsrfTest` - end-to-end through `HttpAnalyzer`: a direct request to loopback and to the cloud metadata address blocked by the real (production) guard with no server needed; a redirect target rejected even when the initial hop passed (proving per-hop revalidation, not just an initial check); a redirect to a non-`http(s)` scheme rejected; a redirect to a non-standard port rejected; exceeding `max-redirects` failing cleanly; `allow-private-targets=true` bypassing both the address and port guards as designed.
 - `AnalysisServiceTest` - a DNS resolution landing on a private address is blocked before TCP/TLS ever run, and `allowPrivateTargets` bypasses it.
-- `AnalyzeEndpointIntegrationTest.blocksALocalHttpUrlAsAnSsrfTarget` - proves the guard is wired through the *real* Spring stack end-to-end (controller → service → analyzer), not just at the unit level.
+- `UrlValidatorTest` - an explicit port matching the scheme's standard port is accepted; any other explicit port, including the *other* scheme's standard port, is rejected.
+- `AnalyzeEndpointIntegrationTest` - `blocksALocalHttpUrlAsAnSsrfTarget` and `rejectsAUrlWithANonStandardPort` prove both guards are wired through the *real* Spring stack end-to-end (controller → service → analyzer), not just at the unit level.

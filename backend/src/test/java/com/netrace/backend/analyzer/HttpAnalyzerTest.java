@@ -26,15 +26,16 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 /**
- * Every test here targets a real local HttpServer on localhost -
- * itself a loopback address the real, production SsrfGuard-backed
- * target guard would refuse to connect to. newAnalyzer()/
- * newAnalyzerWithMaxResponseSize() below build analyzers with a
- * permissive guard so these tests can keep exercising everything else
- * (TTFB, truncation, redirects, protocol detection, error mapping...)
- * against a real, fully controlled local server. The real guard's
- * blocking behavior is tested separately, deliberately against
- * localhost, in HttpAnalyzerSsrfTest.
+ * Every test here targets a real local HttpServer on localhost, bound
+ * to an OS-assigned port - both the real, production SsrfGuard-backed
+ * target guard (loopback is always refused) and the real port guard
+ * (that assigned port is never 80/443) would refuse to connect to it.
+ * newAnalyzer()/newAnalyzerWithMaxResponseSize() below build analyzers
+ * with permissive guards for both so these tests can keep exercising
+ * everything else (TTFB, truncation, redirects, protocol detection,
+ * error mapping...) against a real, fully controlled local server. The
+ * real guards' blocking behavior is tested separately, deliberately
+ * against localhost and non-standard ports, in HttpAnalyzerSsrfTest.
  */
 class HttpAnalyzerTest {
 
@@ -316,7 +317,7 @@ class HttpAnalyzerTest {
         when(mockClient.send(any(), any())).thenThrow(new UnknownHostException("simulated failure"));
         HttpAnalyzer analyzer = new HttpAnalyzer(mockClient,
                 new AnalyzerProperties(Duration.ofSeconds(2), Duration.ofSeconds(2)),
-                address -> false);
+                address -> false, (scheme, port) -> true);
 
         assertThatThrownBy(() -> analyzer.analyze("https://example.com/"))
                 .isInstanceOf(AnalysisException.class)
@@ -383,7 +384,7 @@ class HttpAnalyzerTest {
                 .followRedirects(HttpClient.Redirect.NEVER)
                 .build();
         return new HttpAnalyzer(client, new AnalyzerProperties(Duration.ofSeconds(2), requestTimeout),
-                address -> false);
+                address -> false, (scheme, port) -> true);
     }
 
     private HttpAnalyzer newAnalyzerWithMaxResponseSize(DataSize maxResponseSize) {
@@ -393,6 +394,6 @@ class HttpAnalyzerTest {
                 .build();
         return new HttpAnalyzer(client,
                 new AnalyzerProperties(Duration.ofSeconds(2), Duration.ofSeconds(2), maxResponseSize),
-                address -> false);
+                address -> false, (scheme, port) -> true);
     }
 }
