@@ -178,7 +178,7 @@ public class HttpAnalyzer {
             validateTargetIsAllowed(currentUrl);
 
             TtfbCapturingBodyHandler bodyHandler = new TtfbCapturingBodyHandler(maxResponseBytes);
-            HttpResponse<Boolean> response = send(currentUrl, bodyHandler);
+            HttpResponse<Void> response = send(currentUrl, bodyHandler);
 
             if (REDIRECT_STATUS_CODES.contains(response.statusCode())) {
                 String hopUrl = currentUrl;
@@ -197,14 +197,15 @@ public class HttpAnalyzer {
             long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000;
             long ttfbMs = (bodyHandler.firstByteNanos() - startNanos) / 1_000_000;
             long downloadMs = elapsedMs - ttfbMs;
-            boolean bodyTruncated = Boolean.TRUE.equals(response.body());
+            long responseSizeBytes = bodyHandler.bytesReceived();
+            boolean bodyTruncated = bodyHandler.wasTruncated();
             String protocol = protocolName(response.version());
             OptionalLong contentLengthHeader = response.headers().firstValueAsLong("content-length");
             Long contentLength = contentLengthHeader.isPresent() ? contentLengthHeader.getAsLong() : null;
             String contentType = response.headers().firstValue("content-type").orElse(null);
 
             return new HttpResult(response.uri().toString(), response.statusCode(), elapsedMs, ttfbMs, downloadMs,
-                    bodyTruncated, protocol, contentLength, contentType);
+                    bodyTruncated, protocol, contentLength, contentType, url, redirects, responseSizeBytes);
         }
     }
 
@@ -253,7 +254,7 @@ public class HttpAnalyzer {
         }
     }
 
-    private HttpResponse<Boolean> send(String urlString, TtfbCapturingBodyHandler bodyHandler) {
+    private HttpResponse<Void> send(String urlString, TtfbCapturingBodyHandler bodyHandler) {
         HttpRequest request = HttpRequest.newBuilder(URI.create(urlString))
                 .timeout(requestTimeout)
                 .GET()
@@ -292,25 +293,35 @@ public class HttpAnalyzer {
     /**
      * Times the moment the response status line and headers become
      * available, then hands off to a size-limited discarding
-     * subscriber for the body.
+     * subscriber for the body. Tracks bytes received and truncation.
      */
-    private static final class TtfbCapturingBodyHandler implements HttpResponse.BodyHandler<Boolean> {
+    private static final class TtfbCapturingBodyHandler implements HttpResponse.BodyHandler<Void> {
 
         private final long maxBytes;
         private long firstByteNanos;
+        private SizeLimitedDiscardingBodySubscriber subscriber;
 
         TtfbCapturingBodyHandler(long maxBytes) {
             this.maxBytes = maxBytes;
         }
 
         @Override
-        public HttpResponse.BodySubscriber<Boolean> apply(HttpResponse.ResponseInfo responseInfo) {
+        public HttpResponse.BodySubscriber<Void> apply(HttpResponse.ResponseInfo responseInfo) {
             firstByteNanos = System.nanoTime();
-            return new SizeLimitedDiscardingBodySubscriber(maxBytes);
+            subscriber = new SizeLimitedDiscardingBodySubscriber(maxBytes);
+            return subscriber;
         }
 
         long firstByteNanos() {
             return firstByteNanos;
+        }
+
+        long bytesReceived() {
+            return subscriber.bytesReceived();
+        }
+
+        boolean wasTruncated() {
+            return subscriber.wasTruncated();
         }
     }
 
@@ -319,16 +330,15 @@ public class HttpAnalyzer {
      * same as HttpResponse.BodySubscribers.discarding(), but cancels
      * the subscription once more than maxBytes have been received
      * rather than reading an unbounded or arbitrarily large body to
-     * completion. getBody() resolves to true if the body was
-     * truncated this way, false if it was fully consumed within the
-     * limit.
+     * completion.
      */
     private static final class SizeLimitedDiscardingBodySubscriber
-            implements HttpResponse.BodySubscriber<Boolean> {
+            implements HttpResponse.BodySubscriber<Void> {
 
         private final long maxBytes;
         private final AtomicLong received = new AtomicLong();
-        private final CompletableFuture<Boolean> result = new CompletableFuture<>();
+        private volatile boolean truncated = false;
+        private final CompletableFuture<Void> result = new CompletableFuture<>();
         private volatile Flow.Subscription subscription;
 
         SizeLimitedDiscardingBodySubscriber(long maxBytes) {
@@ -345,8 +355,9 @@ public class HttpAnalyzer {
         public void onNext(List<ByteBuffer> buffers) {
             long total = received.addAndGet(buffers.stream().mapToLong(ByteBuffer::remaining).sum());
             if (total > maxBytes) {
+                truncated = true;
                 subscription.cancel();
-                result.complete(true);
+                result.complete(null);
             }
         }
 
@@ -357,12 +368,20 @@ public class HttpAnalyzer {
 
         @Override
         public void onComplete() {
-            result.complete(false);
+            result.complete(null);
         }
 
         @Override
-        public CompletionStage<Boolean> getBody() {
+        public CompletionStage<Void> getBody() {
             return result;
+        }
+
+        long bytesReceived() {
+            return received.get();
+        }
+
+        boolean wasTruncated() {
+            return truncated;
         }
     }
 }

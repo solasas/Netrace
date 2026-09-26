@@ -4,6 +4,7 @@ import com.netrace.backend.analyzer.AnalysisException;
 import com.netrace.backend.analyzer.DnsAnalyzer;
 import com.netrace.backend.analyzer.HttpAnalyzer;
 import com.netrace.backend.analyzer.TcpAnalyzer;
+import com.netrace.backend.analyzer.TlsAnalyzer;
 import com.netrace.backend.dto.CompareRequest;
 import com.netrace.backend.dto.CompareResult;
 import com.netrace.backend.dto.DnsMetadata;
@@ -11,6 +12,7 @@ import com.netrace.backend.dto.HttpResult;
 import com.netrace.backend.dto.PhaseResult;
 import com.netrace.backend.dto.TcpMetadata;
 import com.netrace.backend.dto.TcpResult;
+import com.netrace.backend.dto.TlsMetadata;
 import com.netrace.backend.validation.UrlValidator;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -41,6 +43,9 @@ class ComparisonServiceTest {
     private TcpAnalyzer tcpAnalyzer;
 
     @Mock
+    private TlsAnalyzer tlsAnalyzer;
+
+    @Mock
     private HttpAnalyzer httpAnalyzer;
 
     private final ExecutorService executor = Executors.newFixedThreadPool(3);
@@ -51,15 +56,20 @@ class ComparisonServiceTest {
     }
 
     private ComparisonService service() {
-        return new ComparisonService(urlValidator, dnsAnalyzer, tcpAnalyzer, httpAnalyzer, executor);
+        return new ComparisonService(urlValidator, dnsAnalyzer, tcpAnalyzer, tlsAnalyzer, httpAnalyzer, executor);
     }
 
     private static HttpResult httpResult(String url, int statusCode, long totalTimeMs, String protocol) {
-        return new HttpResult(url, statusCode, totalTimeMs, totalTimeMs - 5, 5, false, protocol, 100L, "text/html");
+        return new HttpResult(url, statusCode, totalTimeMs, totalTimeMs - 5, 5, false, protocol, 100L, "text/html", url, 0, 100L);
     }
 
     private static PhaseResult<DnsMetadata> dnsSuccess(String hostname, String ipv4) {
         return PhaseResult.success("DNS", 10L, new DnsMetadata(hostname, List.of(ipv4), List.of()));
+    }
+
+    private static PhaseResult<TlsMetadata> tlsSuccess(String hostname, String ip, int port) {
+        return PhaseResult.success("TLS", 7L,
+                new TlsMetadata(hostname, ip, port, "TLSv1.3", "TLS_AES_256_GCM_SHA384", "CN=example.com", "CN=Example CA", null));
     }
 
     @Test
@@ -71,10 +81,12 @@ class ComparisonServiceTest {
 
         when(dnsAnalyzer.analyze(urlA)).thenReturn(dnsSuccess("a.example.com", "1.2.3.4"));
         when(tcpAnalyzer.analyze("1.2.3.4", 443)).thenReturn(PhaseResult.success("TCP", 5L, new TcpMetadata("1.2.3.4", 443)));
+        when(tlsAnalyzer.analyze("a.example.com", "1.2.3.4", 443)).thenReturn(tlsSuccess("a.example.com", "1.2.3.4", 443));
         when(httpAnalyzer.analyze(urlA)).thenReturn(httpResult(urlA, 200, 120L, "HTTP/2"));
 
         when(dnsAnalyzer.analyze(urlB)).thenReturn(dnsSuccess("b.example.com", "5.6.7.8"));
         when(tcpAnalyzer.analyze("5.6.7.8", 443)).thenReturn(PhaseResult.success("TCP", 3L, new TcpMetadata("5.6.7.8", 443)));
+        when(tlsAnalyzer.analyze("b.example.com", "5.6.7.8", 443)).thenReturn(tlsSuccess("b.example.com", "5.6.7.8", 443));
         when(httpAnalyzer.analyze(urlB)).thenReturn(httpResult(urlB, 200, 80L, "HTTP/2"));
 
         List<CompareResult> results = service().compare(new CompareRequest(List.of(urlA, urlB))).results();
@@ -86,6 +98,7 @@ class ComparisonServiceTest {
         assertThat(results.get(0).totalTimeMs()).isEqualTo(120L);
         assertThat(results.get(0).dns()).isNotNull();
         assertThat(results.get(0).tcp()).isNotNull();
+        assertThat(results.get(0).tls()).isNotNull();
 
         assertThat(results.get(1).url()).isEqualTo(urlB);
         assertThat(results.get(1).success()).isTrue();
@@ -93,6 +106,7 @@ class ComparisonServiceTest {
         assertThat(results.get(1).totalTimeMs()).isEqualTo(80L);
         assertThat(results.get(1).dns()).isNotNull();
         assertThat(results.get(1).tcp()).isNotNull();
+        assertThat(results.get(1).tls()).isNotNull();
     }
 
     @Test
@@ -104,6 +118,7 @@ class ComparisonServiceTest {
 
         when(dnsAnalyzer.analyze(goodUrl)).thenReturn(dnsSuccess("example.com", "1.2.3.4"));
         when(tcpAnalyzer.analyze("1.2.3.4", 443)).thenReturn(PhaseResult.success("TCP", 5L, new TcpMetadata("1.2.3.4", 443)));
+        when(tlsAnalyzer.analyze("example.com", "1.2.3.4", 443)).thenReturn(tlsSuccess("example.com", "1.2.3.4", 443));
         when(httpAnalyzer.analyze(goodUrl)).thenReturn(httpResult(goodUrl, 200, 50L, "HTTP/2"));
 
         List<CompareResult> results = service().compare(new CompareRequest(List.of(badUrl, goodUrl))).results();
@@ -128,6 +143,7 @@ class ComparisonServiceTest {
 
         when(dnsAnalyzer.analyze(succeedingUrl)).thenReturn(dnsSuccess("example.com", "1.2.3.4"));
         when(tcpAnalyzer.analyze("1.2.3.4", 443)).thenReturn(PhaseResult.success("TCP", 5L, new TcpMetadata("1.2.3.4", 443)));
+        when(tlsAnalyzer.analyze("example.com", "1.2.3.4", 443)).thenReturn(tlsSuccess("example.com", "1.2.3.4", 443));
         when(httpAnalyzer.analyze(succeedingUrl)).thenReturn(httpResult(succeedingUrl, 200, 90L, "HTTP/1.1"));
 
         List<CompareResult> results = service()
@@ -154,5 +170,23 @@ class ComparisonServiceTest {
         List<CompareResult> results = service().compare(new CompareRequest(List.of(urlA, urlB))).results();
 
         assertThat(results).extracting(CompareResult::success).containsExactly(false, false);
+    }
+
+    @Test
+    void httpUrlsHaveNullTlsButSucceedOtherwise() {
+        String httpUrl = "http://example.com";
+        when(urlValidator.isValid(httpUrl)).thenReturn(true);
+
+        when(dnsAnalyzer.analyze(httpUrl)).thenReturn(dnsSuccess("example.com", "1.2.3.4"));
+        when(tcpAnalyzer.analyze("1.2.3.4", 80)).thenReturn(PhaseResult.success("TCP", 5L, new TcpMetadata("1.2.3.4", 80)));
+        when(httpAnalyzer.analyze(httpUrl)).thenReturn(httpResult(httpUrl, 200, 30L, "HTTP/1.1"));
+
+        List<CompareResult> results = service().compare(new CompareRequest(List.of(httpUrl))).results();
+
+        assertThat(results).hasSize(1);
+        assertThat(results.get(0).success()).isTrue();
+        assertThat(results.get(0).dns()).isNotNull();
+        assertThat(results.get(0).tcp()).isNotNull();
+        assertThat(results.get(0).tls()).isNull();
     }
 }

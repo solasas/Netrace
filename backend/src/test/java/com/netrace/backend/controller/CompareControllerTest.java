@@ -5,6 +5,7 @@ import com.netrace.backend.dto.CompareResult;
 import com.netrace.backend.dto.DnsResult;
 import com.netrace.backend.dto.HttpResult;
 import com.netrace.backend.dto.TcpResult;
+import com.netrace.backend.dto.TlsResult;
 import com.netrace.backend.service.ComparisonService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -34,9 +35,10 @@ class CompareControllerTest {
     void returnsOkWithAMixOfSuccessAndFailureResults() throws Exception {
         DnsResult dns = new DnsResult("a.example.com", List.of("93.184.216.34"), List.of(), 12L, true);
         TcpResult tcp = TcpResult.success("93.184.216.34", 443, 8L);
-        HttpResult httpSuccess = new HttpResult("https://a.example.com", 200, 120L, 50L, 70L, false, "HTTP/2", 1024L, "text/html");
+        TlsResult tls = new TlsResult("TLSv1.3", "TLS_AES_256_GCM_SHA384", "CN=example.com", "CN=Example CA", 15L);
+        HttpResult httpSuccess = new HttpResult("https://a.example.com", 200, 120L, 50L, 70L, false, "HTTP/2", 1024L, "text/html", "https://a.example.com", 0, 1024L);
         when(comparisonService.compare(any())).thenReturn(new CompareResponse(List.of(
-                CompareResult.success("https://a.example.com", httpSuccess, dns, tcp),
+                CompareResult.success("https://a.example.com", httpSuccess, dns, tcp, tls),
                 CompareResult.failure("https://b.example.com", "Connection refused by b"))));
 
         mockMvc.perform(post("/api/compare")
