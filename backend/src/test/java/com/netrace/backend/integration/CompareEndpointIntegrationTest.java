@@ -42,6 +42,15 @@ class CompareEndpointIntegrationTest {
             assertThat(result.statusCode()).isEqualTo(200);
             assertThat(result.totalTimeMs()).isGreaterThanOrEqualTo(0);
             assertThat(result.error()).isNull();
+
+            assertThat(result.dns()).isNotNull();
+            assertThat(result.dns().success()).isTrue();
+            assertThat(result.dns().durationMs()).isGreaterThanOrEqualTo(0);
+
+            assertThat(result.tcp()).isNotNull();
+            assertThat(result.tcp().success()).isTrue();
+            assertThat(result.tcp().durationMs()).isGreaterThanOrEqualTo(0);
+            assertThat(result.tcp().port()).isEqualTo(443);
         });
     }
 
@@ -59,6 +68,8 @@ class CompareEndpointIntegrationTest {
 
         assertThat(results.get(0).url()).isEqualTo("https://example.com");
         assertThat(results.get(0).success()).isTrue();
+        assertThat(results.get(0).dns()).isNotNull();
+        assertThat(results.get(0).tcp()).isNotNull();
 
         assertThat(results.get(1).url()).isEqualTo("http://localhost/");
         assertThat(results.get(1).success()).isFalse();
@@ -66,5 +77,7 @@ class CompareEndpointIntegrationTest {
 
         assertThat(results.get(2).url()).isEqualTo("https://example.org");
         assertThat(results.get(2).success()).isTrue();
+        assertThat(results.get(2).dns()).isNotNull();
+        assertThat(results.get(2).tcp()).isNotNull();
     }
 }

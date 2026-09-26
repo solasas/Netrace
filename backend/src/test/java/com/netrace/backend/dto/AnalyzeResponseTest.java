@@ -14,7 +14,7 @@ class AnalyzeResponseTest {
     @Test
     void serializesToTheExpectedJsonFieldsForAnHttpsResponse() throws Exception {
         DnsResult dns = new DnsResult("example.com", List.of("93.184.216.34"), List.of(), 12L, true);
-        TcpResult tcp = new TcpResult("93.184.216.34", 443, 8L);
+        TcpResult tcp = TcpResult.success("93.184.216.34", 443, 8L);
         TlsResult tls = new TlsResult("TLSv1.3", "TLS_AES_128_GCM_SHA256", "CN=example.com", "CN=Test CA", 20L);
         Probes probes = new Probes(dns, tcp, tls);
         AnalyzeResponse response = new AnalyzeResponse(
@@ -45,7 +45,9 @@ class AnalyzeResponseTest {
                             "tcp": {
                               "host": "93.184.216.34",
                               "port": 443,
-                              "durationMs": 8
+                              "durationMs": 8,
+                              "success": true,
+                              "failureReason": null
                             },
                             "tls": {
                               "tlsVersion": "TLSv1.3",
@@ -62,7 +64,7 @@ class AnalyzeResponseTest {
     @Test
     void serializesTlsAsNullForAnHttpResponse() throws Exception {
         DnsResult dns = new DnsResult("example.com", List.of("93.184.216.34"), List.of(), 12L, true);
-        TcpResult tcp = new TcpResult("93.184.216.34", 80, 8L);
+        TcpResult tcp = TcpResult.success("93.184.216.34", 80, 8L);
         Probes probes = new Probes(dns, tcp, null);
         AnalyzeResponse response = new AnalyzeResponse(
                 "http://example.com", 200, "HTTP/1.1", null, "text/plain", 100L, 23L, false, 123L, probes);
@@ -101,7 +103,9 @@ class AnalyzeResponseTest {
                     "tcp": {
                       "host": "93.184.216.34",
                       "port": 443,
-                      "durationMs": 8
+                      "durationMs": 8,
+                      "success": true,
+                      "failureReason": null
                     },
                     "tls": {
                       "tlsVersion": "TLSv1.3",
@@ -117,7 +121,7 @@ class AnalyzeResponseTest {
         AnalyzeResponse response = objectMapper.readValue(json, AnalyzeResponse.class);
 
         DnsResult dns = new DnsResult("example.com", List.of("93.184.216.34"), List.of(), 12L, true);
-        TcpResult tcp = new TcpResult("93.184.216.34", 443, 8L);
+        TcpResult tcp = TcpResult.success("93.184.216.34", 443, 8L);
         TlsResult tls = new TlsResult("TLSv1.3", "TLS_AES_128_GCM_SHA256", "CN=example.com", "CN=Test CA", 20L);
         Probes probes = new Probes(dns, tcp, tls);
         assertThat(response).isEqualTo(new AnalyzeResponse(

@@ -92,7 +92,7 @@ class AnalysisServiceTest {
         AnalyzeResponse actual = service().analyze(new AnalyzeRequest(url));
 
         DnsResult expectedDns = new DnsResult("example.com", List.of("93.184.216.34"), List.of(), 12L, true);
-        TcpResult expectedTcp = new TcpResult("93.184.216.34", 443, 8L);
+        TcpResult expectedTcp = TcpResult.success("93.184.216.34", 443, 8L);
         TlsResult expectedTls =
                 new TlsResult("TLSv1.3", "TLS_AES_128_GCM_SHA256", "CN=example.com", "CN=Test CA", 20L);
         Probes expectedProbes = new Probes(expectedDns, expectedTcp, expectedTls);

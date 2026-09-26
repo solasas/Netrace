@@ -35,7 +35,7 @@ class AnalyzeControllerTest {
     @Test
     void returnsOkWithTheAnalysisResultOnSuccess() throws Exception {
         DnsResult dns = new DnsResult("example.com", List.of("93.184.216.34"), List.of(), 12L, true);
-        TcpResult tcp = new TcpResult("93.184.216.34", 443, 8L);
+        TcpResult tcp = TcpResult.success("93.184.216.34", 443, 8L);
         TlsResult tls = new TlsResult("TLSv1.3", "TLS_AES_128_GCM_SHA256", "CN=example.com", "CN=Test CA", 20L);
         Probes probes = new Probes(dns, tcp, tls);
         when(analysisService.analyze(any())).thenReturn(
@@ -73,7 +73,7 @@ class AnalyzeControllerTest {
     @Test
     void returnsNullTlsAndHttp1_1ProtocolForAnHttpUrl() throws Exception {
         DnsResult dns = new DnsResult("example.com", List.of("93.184.216.34"), List.of(), 12L, true);
-        TcpResult tcp = new TcpResult("93.184.216.34", 80, 8L);
+        TcpResult tcp = TcpResult.success("93.184.216.34", 80, 8L);
         Probes probes = new Probes(dns, tcp, null);
         when(analysisService.analyze(any())).thenReturn(
                 new AnalyzeResponse("http://example.com", 200, "HTTP/1.1", null, "text/plain",

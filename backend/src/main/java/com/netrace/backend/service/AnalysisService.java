@@ -171,7 +171,7 @@ public class AnalysisService {
         if (tcpPhase.status() == PhaseResult.Status.FAILURE) {
             throw tcpFailure(resolvedIp, port, tcpPhase.metadata().failureReason());
         }
-        return new TcpResult(resolvedIp, port, tcpPhase.durationMs());
+        return TcpResult.success(resolvedIp, port, tcpPhase.durationMs());
     }
 
     private TlsResult runTls(String hostname, String resolvedIp, int port) {

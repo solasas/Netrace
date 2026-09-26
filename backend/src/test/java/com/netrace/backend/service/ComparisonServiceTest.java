@@ -1,10 +1,16 @@
 package com.netrace.backend.service;
 
 import com.netrace.backend.analyzer.AnalysisException;
+import com.netrace.backend.analyzer.DnsAnalyzer;
 import com.netrace.backend.analyzer.HttpAnalyzer;
+import com.netrace.backend.analyzer.TcpAnalyzer;
 import com.netrace.backend.dto.CompareRequest;
 import com.netrace.backend.dto.CompareResult;
+import com.netrace.backend.dto.DnsMetadata;
 import com.netrace.backend.dto.HttpResult;
+import com.netrace.backend.dto.PhaseResult;
+import com.netrace.backend.dto.TcpMetadata;
+import com.netrace.backend.dto.TcpResult;
 import com.netrace.backend.validation.UrlValidator;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -29,6 +35,12 @@ class ComparisonServiceTest {
     private UrlValidator urlValidator;
 
     @Mock
+    private DnsAnalyzer dnsAnalyzer;
+
+    @Mock
+    private TcpAnalyzer tcpAnalyzer;
+
+    @Mock
     private HttpAnalyzer httpAnalyzer;
 
     private final ExecutorService executor = Executors.newFixedThreadPool(3);
@@ -39,11 +51,15 @@ class ComparisonServiceTest {
     }
 
     private ComparisonService service() {
-        return new ComparisonService(urlValidator, httpAnalyzer, executor);
+        return new ComparisonService(urlValidator, dnsAnalyzer, tcpAnalyzer, httpAnalyzer, executor);
     }
 
     private static HttpResult httpResult(String url, int statusCode, long totalTimeMs, String protocol) {
         return new HttpResult(url, statusCode, totalTimeMs, totalTimeMs - 5, 5, false, protocol, 100L, "text/html");
+    }
+
+    private static PhaseResult<DnsMetadata> dnsSuccess(String hostname, String ipv4) {
+        return PhaseResult.success("DNS", 10L, new DnsMetadata(hostname, List.of(ipv4), List.of()));
     }
 
     @Test
@@ -52,14 +68,31 @@ class ComparisonServiceTest {
         String urlB = "https://b.example.com";
         when(urlValidator.isValid(urlA)).thenReturn(true);
         when(urlValidator.isValid(urlB)).thenReturn(true);
+
+        when(dnsAnalyzer.analyze(urlA)).thenReturn(dnsSuccess("a.example.com", "1.2.3.4"));
+        when(tcpAnalyzer.analyze("1.2.3.4", 443)).thenReturn(PhaseResult.success("TCP", 5L, new TcpMetadata("1.2.3.4", 443)));
         when(httpAnalyzer.analyze(urlA)).thenReturn(httpResult(urlA, 200, 120L, "HTTP/2"));
+
+        when(dnsAnalyzer.analyze(urlB)).thenReturn(dnsSuccess("b.example.com", "5.6.7.8"));
+        when(tcpAnalyzer.analyze("5.6.7.8", 443)).thenReturn(PhaseResult.success("TCP", 3L, new TcpMetadata("5.6.7.8", 443)));
         when(httpAnalyzer.analyze(urlB)).thenReturn(httpResult(urlB, 200, 80L, "HTTP/2"));
 
         List<CompareResult> results = service().compare(new CompareRequest(List.of(urlA, urlB))).results();
 
-        assertThat(results).containsExactly(
-                new CompareResult(urlA, true, 200, "HTTP/2", 120L, null),
-                new CompareResult(urlB, true, 200, "HTTP/2", 80L, null));
+        assertThat(results).hasSize(2);
+        assertThat(results.get(0).url()).isEqualTo(urlA);
+        assertThat(results.get(0).success()).isTrue();
+        assertThat(results.get(0).statusCode()).isEqualTo(200);
+        assertThat(results.get(0).totalTimeMs()).isEqualTo(120L);
+        assertThat(results.get(0).dns()).isNotNull();
+        assertThat(results.get(0).tcp()).isNotNull();
+
+        assertThat(results.get(1).url()).isEqualTo(urlB);
+        assertThat(results.get(1).success()).isTrue();
+        assertThat(results.get(1).statusCode()).isEqualTo(200);
+        assertThat(results.get(1).totalTimeMs()).isEqualTo(80L);
+        assertThat(results.get(1).dns()).isNotNull();
+        assertThat(results.get(1).tcp()).isNotNull();
     }
 
     @Test
@@ -68,6 +101,9 @@ class ComparisonServiceTest {
         String goodUrl = "https://example.com";
         when(urlValidator.isValid(badUrl)).thenReturn(false);
         when(urlValidator.isValid(goodUrl)).thenReturn(true);
+
+        when(dnsAnalyzer.analyze(goodUrl)).thenReturn(dnsSuccess("example.com", "1.2.3.4"));
+        when(tcpAnalyzer.analyze("1.2.3.4", 443)).thenReturn(PhaseResult.success("TCP", 5L, new TcpMetadata("1.2.3.4", 443)));
         when(httpAnalyzer.analyze(goodUrl)).thenReturn(httpResult(goodUrl, 200, 50L, "HTTP/2"));
 
         List<CompareResult> results = service().compare(new CompareRequest(List.of(badUrl, goodUrl))).results();
@@ -77,6 +113,7 @@ class ComparisonServiceTest {
         assertThat(results.get(0).statusCode()).isNull();
         assertThat(results.get(1).success()).isTrue();
         verify(httpAnalyzer, never()).analyze(eq(badUrl));
+        verify(dnsAnalyzer, never()).analyze(eq(badUrl));
     }
 
     @Test
@@ -85,8 +122,12 @@ class ComparisonServiceTest {
         String succeedingUrl = "https://example.com";
         when(urlValidator.isValid(failingUrl)).thenReturn(true);
         when(urlValidator.isValid(succeedingUrl)).thenReturn(true);
-        when(httpAnalyzer.analyze(failingUrl)).thenThrow(new AnalysisException(
+
+        when(dnsAnalyzer.analyze(failingUrl)).thenThrow(new AnalysisException(
                 AnalysisException.Reason.CONNECTION_FAILURE, "Failed to connect to " + failingUrl, null));
+
+        when(dnsAnalyzer.analyze(succeedingUrl)).thenReturn(dnsSuccess("example.com", "1.2.3.4"));
+        when(tcpAnalyzer.analyze("1.2.3.4", 443)).thenReturn(PhaseResult.success("TCP", 5L, new TcpMetadata("1.2.3.4", 443)));
         when(httpAnalyzer.analyze(succeedingUrl)).thenReturn(httpResult(succeedingUrl, 200, 90L, "HTTP/1.1"));
 
         List<CompareResult> results = service()
@@ -104,9 +145,10 @@ class ComparisonServiceTest {
         String urlB = "https://b.example.com";
         when(urlValidator.isValid(urlA)).thenReturn(true);
         when(urlValidator.isValid(urlB)).thenReturn(true);
-        when(httpAnalyzer.analyze(urlA)).thenThrow(new AnalysisException(
+
+        when(dnsAnalyzer.analyze(urlA)).thenThrow(new AnalysisException(
                 AnalysisException.Reason.TIMEOUT, "Request to " + urlA + " timed out", null));
-        when(httpAnalyzer.analyze(urlB)).thenThrow(new AnalysisException(
+        when(dnsAnalyzer.analyze(urlB)).thenThrow(new AnalysisException(
                 AnalysisException.Reason.DNS_FAILURE, "Could not resolve host for " + urlB, null));
 
         List<CompareResult> results = service().compare(new CompareRequest(List.of(urlA, urlB))).results();
