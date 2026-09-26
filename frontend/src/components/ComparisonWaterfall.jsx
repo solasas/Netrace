@@ -333,7 +333,7 @@ function ComparisonWaterfall({ results = [] }) {
           </h3>
           <p className="text-xs text-slate-500">
             {displayMode === 'sideBySide'
-              ? 'Each URL's phase durations on a shared scale. DNS, TCP, and TLS are independent measurements; Request is the sequential TTFB + Download pair.'
+              ? "Each URL's phase durations on a shared scale. DNS, TCP, and TLS are independent measurements; Request is the sequential TTFB + Download pair."
               : displayMode === 'overlay'
                 ? 'Phase Duration Comparison — relative durations on a normalized scale. Independent phases (DNS, TCP, TLS) and sequential phases (TTFB + Download) shown for comparison.'
                 : 'Relative observed phase durations as percentage of total HTTP time. Shows approximate contribution of each measured phase.'}
